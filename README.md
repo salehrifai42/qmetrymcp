@@ -40,7 +40,7 @@ The server is configured entirely through environment variables:
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `QTM4J_API_KEY` | yes | — | QMetry API key, sent on every request as the `apiKey` header |
-| `QTM4J_REGION` | no  | `US` | `US` → `https://qtmcloud.qmetry.com/rest/api/latest`, `AU` → `https://qtmcloud-au.qmetry.com/rest/api/latest` |
+| `QTM4J_REGION` | no  | `US` | `US` → `https://qtmcloud.qmetry.com/rest/api/latest`, `AU` → `https://syd-qtmcloud.qmetry.com/rest/api/latest` |
 
 ### Local config reference
 
@@ -106,53 +106,17 @@ In a session you can also run `/mcp` to see connected servers and their tools.
 
 ### GitHub Copilot (VS Code)
 
-Copilot's agent mode supports MCP via a `.vscode/mcp.json` file in your workspace (or the equivalent block in user `settings.json` under `github.copilot.chat.mcp.servers`). Note: Copilot's schema uses `servers` (not `mcpServers`) and expects an explicit `type`:
-
-```jsonc
-// .vscode/mcp.json
-{
-  "servers": {
-    "qtm4j": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["/path/to/qmetrymcp/dist/index.js"],
-      "env": {
-        "QTM4J_API_KEY": "your-api-key-here",
-        "QTM4J_REGION": "US"
-      }
-    }
-  }
-}
-```
-
-After saving, open the Copilot Chat panel, switch to **Agent** mode, and the `qtm4j` tools will appear in the tool picker. If you don't want to commit your API key, use VS Code's secret input:
-
-```jsonc
-{
-  "inputs": [
-    { "id": "qtm4jKey", "type": "promptString", "description": "QTM4J API Key", "password": true }
-  ],
-  "servers": {
-    "qtm4j": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["/path/to/qmetrymcp/dist/index.js"],
-      "env": {
-        "QTM4J_API_KEY": "${input:qtm4jKey}",
-        "QTM4J_REGION": "US"
-      }
-    }
-  }
-}
-```
+A `.vscode/mcp.json` is already committed to this repo. After cloning and building, open the Copilot Chat panel, switch to **Agent** mode, and VS Code will prompt you for your API key (stored securely, never committed). The `qtm4j` tools will then appear in the tool picker.
 
 ### Trying it out
 
 Once connected, ask the assistant something like:
 
-> *Search QMetry project 10011 for test cases with status "Approved" and show me the first 5.*
+> *Search QMetry project 10011 for test cases with status "To Do" and show me the first 5.*
 
-The client will call `search_test_cases` with `{ projectId: 10011, status: ["Approved"], maxResults: 5 }` and render the response.
+The client will call `search_test_cases` with `{ projectId: 10011, status: ["To Do"], maxResults: 5 }` and render the response.
+
+> *Get all executions in test cycle FS-TR-747 and mark any unexecuted ones as Pass.*
 
 ## Example tool calls
 
@@ -167,13 +131,13 @@ The client will call `search_test_cases` with `{ projectId: 10011, status: ["App
   }
 }
 
-// Update an execution result
+// Update an execution result (executionResultId: 239444=Pass, 239441=Fail, 239443=Not Executed)
 {
   "name": "update_test_execution",
   "arguments": {
-    "cycleId": 1234,
-    "testCaseExecutionId": 56789,
-    "executionResultId": 2,
+    "cycleId": "gxMbioKJsyEr3E",
+    "testCaseExecutionId": 287595809,
+    "executionResultId": 239444,
     "comment": "Verified on staging"
   }
 }

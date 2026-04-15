@@ -31,7 +31,7 @@ After rebuilding, restart the MCP server in Claude Code:
 ```bash
 claude mcp remove qtm4j && claude mcp add qtm4j \
   -e QTM4J_API_KEY=<key> -e QTM4J_REGION=US \
-  -- node /Users/saleh.rifai/qmetrymcp/dist/index.js
+  -- node /absolute/path/to/qmetrymcp/dist/index.js
 ```
 
 ## Architecture
