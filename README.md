@@ -33,9 +33,26 @@ npm install
 npm run build
 ```
 
+## Quick setup
+
+**Step 1 — set your API key in the shell** (add to `~/.zshrc` or `~/.bashrc` so it persists):
+
+```bash
+export QTM4J_API_KEY=your-api-key-here
+```
+
+**Step 2 — build:**
+
+```bash
+npm install
+npm run build
+```
+
+That's it. Both Claude Code and GitHub Copilot configs are already in the repo and will pick up the env var automatically (see below).
+
 ## Configuration
 
-The server is configured entirely through environment variables:
+The server reads two environment variables:
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
@@ -50,7 +67,7 @@ A `config.template.json` is included at the repo root with all common field valu
 cp config.template.json config.json
 ```
 
-`config.json` is git-ignored — it is safe to store your API key and account IDs there for local reference. The MCP server itself still reads only from environment variables.
+`config.json` is git-ignored — safe to store your API key and account IDs there for local reference. The MCP server itself reads only from environment variables.
 
 ## Running
 
@@ -62,7 +79,17 @@ The server speaks MCP over stdio — you don't normally run it directly; your MC
 
 ## MCP client configuration
 
-All clients run the server directly with `node`. Replace `/path/to/qmetrymcp` with the absolute path to where you cloned the repo.
+### Claude Code (CLI)
+
+A `.mcp.json` is already committed to this repo. After building, open Claude Code in this directory and the `qtm4j` server connects automatically — no extra config needed. It reads `QTM4J_API_KEY` from your shell environment.
+
+Verify it's registered:
+
+```bash
+claude mcp list
+```
+
+In a session you can also run `/mcp` to see connected servers and their tools.
 
 ### Claude Desktop
 
@@ -82,27 +109,6 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS 
   }
 }
 ```
-
-### Claude Code (CLI)
-
-Use the `claude mcp add` command:
-
-```bash
-claude mcp add qtm4j \
-  -e QTM4J_API_KEY=your-api-key-here \
-  -e QTM4J_REGION=US \
-  -- node /path/to/qmetrymcp/dist/index.js
-```
-
-This writes to your user-scoped config (`~/.claude.json`). To scope it to a single repo instead, drop a `.mcp.json` at the project root with the same `mcpServers` shape as the Claude Desktop example above — Claude Code will pick it up automatically.
-
-Verify it's registered:
-
-```bash
-claude mcp list
-```
-
-In a session you can also run `/mcp` to see connected servers and their tools.
 
 ### GitHub Copilot (VS Code)
 
