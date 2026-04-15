@@ -1,5 +1,5 @@
 {
-  "_instructions": "Copy this file to config.json, fill in your values, then reference them when calling tools.",
+  "_instructions": "Only 'connection' and 'project' are required. All other fields are optional — fill in only what you need.",
 
   "connection": {
     "apiKey": "YOUR_QMETRY_API_KEY_HERE",
@@ -7,24 +7,11 @@
   },
 
   "project": {
-    "projectId": 10011,
-    "projectKey": "FS"
+    "projectId": 10011
   },
-
-  "defaults": {
-    "maxResults": 50,
-    "sort": "id:asc"
-  },
-
-  "statuses": {
-    "testCase": ["Draft", "Approved", "Deprecated"],
-    "testCycle": ["Not Started", "In Progress", "Done"],
-    "testExecution": ["Unexecuted", "Pass", "Fail", "In Progress", "Blocked", "Not Applicable"]
-  },
-
-  "priorities": ["Trivial", "Minor", "Medium", "Major", "Critical"],
 
   "executionResultIds": {
+    "_note": "Required only for update_test_execution and bulk_update_test_executions. Verify IDs match your QMetry instance.",
     "Unexecuted": 1,
     "Pass": 2,
     "Fail": 3,
@@ -33,31 +20,14 @@
     "Not Applicable": 6
   },
 
-  "users": {
-    "exampleUser": {
-      "displayName": "John Doe",
-      "accountId": "YOUR_JIRA_ACCOUNT_ID_HERE"
-    }
-  },
-
-  "folders": {
+  "optionalFields": {
+    "_note": "Fill in only the fields you actually use.",
+    "assigneeAccountId": "YOUR_JIRA_ACCOUNT_ID",
     "testCaseFolderId": 0,
     "testCycleFolderId": 0,
-    "testPlanFolderId": 0
-  },
-
-  "environments": {
-    "exampleEnvId": 0
-  },
-
-  "builds": {
-    "exampleBuildId": 0
-  },
-
-  "customFields": [
-    {
-      "id": "qcf_1",
-      "value": "YOUR_CUSTOM_FIELD_VALUE"
-    }
-  ]
+    "testPlanFolderId": 0,
+    "environmentId": 0,
+    "buildId": 0,
+    "customFieldId": "qcf_1"
+  }
 }

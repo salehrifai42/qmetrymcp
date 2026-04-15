@@ -141,17 +141,19 @@ tool(
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     summary: z.string().describe("Test case title/summary"),
-    description: z.string().optional().describe("Description (HTML supported)"),
-    priority: z.string().optional().describe("Priority e.g. High, Medium, Low"),
-    status: z.string().optional().describe("Initial status"),
+    precondition: z.string().optional().describe("Precondition / description text"),
+    priority: z.number().int().optional().describe("Priority integer ID (e.g. 600784 for High)"),
+    status: z.number().int().optional().describe("Status integer ID (e.g. 544256 for Done)"),
     assignee: z.string().optional().describe("Assignee Jira account ID"),
-    labels: z.array(z.string()).optional().describe("Labels to attach"),
-    components: z.array(z.string()).optional().describe("Component names"),
-    fixVersions: z.array(z.string()).optional().describe("Fix version names"),
+    labels: z.array(z.number().int()).optional().describe("Label IDs to attach"),
+    components: z.array(z.number().int()).optional().describe("Component IDs"),
+    fixVersions: z.array(z.number().int()).optional().describe("Fix version IDs"),
     folderId: z.number().int().optional().describe("Target folder ID"),
     customFields: z.array(CustomField).optional().describe("Custom field values"),
   },
-  async (input) => ok(await qtmFetch("/testcases", { method: "POST", body: JSON.stringify(input) }))
+  async (body) => {
+    return ok(await qtmFetch("/testcases", { method: "POST", body: JSON.stringify(body) }));
+  }
 );
 
 tool(
@@ -187,13 +189,13 @@ tool(
     id: ID.describe("Test case ID"),
     versionNo: z.number().int().describe("Version number to update"),
     summary: z.string().optional(),
-    description: z.string().optional(),
-    priority: z.string().optional(),
-    status: z.string().optional(),
+    precondition: z.string().optional(),
+    priority: z.number().int().optional().describe("Priority integer ID"),
+    status: z.number().int().optional().describe("Status integer ID"),
     assignee: z.string().optional().describe("Assignee Jira account ID"),
-    labels: z.array(z.string()).optional(),
-    components: z.array(z.string()).optional(),
-    fixVersions: z.array(z.string()).optional(),
+    labels: z.array(z.number().int()).optional(),
+    components: z.array(z.number().int()).optional(),
+    fixVersions: z.array(z.number().int()).optional(),
     customFields: z.array(CustomField).optional(),
   },
   async ({ id, versionNo, ...rest }) => {

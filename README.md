@@ -42,6 +42,16 @@ The server is configured entirely through environment variables:
 | `QTM4J_API_KEY` | yes | — | QMetry API key, sent on every request as the `apiKey` header |
 | `QTM4J_REGION` | no  | `US` | `US` → `https://qtmcloud.qmetry.com/rest/api/latest`, `AU` → `https://qtmcloud-au.qmetry.com/rest/api/latest` |
 
+### Local config reference
+
+A `config.template.json` is included at the repo root with all common field values (project ID, statuses, priorities, execution result IDs, folder IDs, custom fields, etc.). Copy it and fill in your values:
+
+```bash
+cp config.template.json config.json
+```
+
+`config.json` is git-ignored — it is safe to store your API key and account IDs there for local reference. The MCP server itself still reads only from environment variables.
+
 ## Running
 
 ```bash
