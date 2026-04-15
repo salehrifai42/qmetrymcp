@@ -1,19 +1,11 @@
 {
-  "inputs": [
-    {
-      "id": "qtm4jKey",
-      "type": "promptString",
-      "description": "QTM4J API Key",
-      "password": true
-    }
-  ],
   "servers": {
     "qtm4j": {
       "type": "stdio",
       "command": "node",
       "args": ["${workspaceFolder}/dist/index.js"],
       "env": {
-        "QTM4J_API_KEY": "${input:qtm4jKey}",
+        "QTM4J_API_KEY": "${env:QTM4J_API_KEY}",
         "QTM4J_REGION": "US"
       }
     }
