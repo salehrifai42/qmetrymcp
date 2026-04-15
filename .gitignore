@@ -6,11 +6,19 @@ dist/
 .env.*
 !.env.example
 *.tsbuildinfo
-.vscode/
+.vscode/*.json
+!.vscode/mcp.json
 .idea/
 
 # Local config with secrets - never commit
 config.json
+.mcp.json
+
+# Full OpenAPI spec (large, for local reference only)
+qtm4j_openapi_spec.json
+
+# Field reference with real project values
+field_reference.json
 
 # SSH keys - never commit these
 fine

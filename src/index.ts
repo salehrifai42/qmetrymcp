@@ -10,7 +10,7 @@ const REGION = (process.env.QTM4J_REGION ?? "US").toUpperCase();
 
 const BASE_URLS: Record<string, string> = {
   US: "https://qtmcloud.qmetry.com/rest/api/latest",
-  AU: "https://qtmcloud-au.qmetry.com/rest/api/latest",
+  AU: "https://syd-qtmcloud.qmetry.com/rest/api/latest",
 };
 
 const BASE_URL = BASE_URLS[REGION] ?? BASE_URLS["US"];
@@ -534,7 +534,12 @@ tool(
     ...Pagination,
   },
   async ({ id, startAt, maxResults, sort, fields }) =>
-    ok(await qtmFetch(`/testplans/${id}/testcycles${qs({ startAt, maxResults, sort, fields })}`))
+    ok(
+      await qtmFetch(`/testplans/${id}/testcycles${qs({ startAt, maxResults, sort, fields })}`, {
+        method: "POST",
+        body: JSON.stringify({ filter: {} }),
+      })
+    )
 );
 
 tool(
@@ -566,8 +571,13 @@ tool(
       .enum(["TESTCASE", "TESTCYCLE", "TESTPLAN"])
       .describe("Folder type to list"),
   },
-  async ({ projectId, folderType }) =>
-    ok(await qtmFetch(`/folders${qs({ projectId, folderType })}`))
+  async ({ projectId, folderType }) => {
+    const typeSegment =
+      folderType === "TESTCASE" ? "testcase-folders"
+      : folderType === "TESTCYCLE" ? "testcycle-folders"
+      : "testplan-folders";
+    return ok(await qtmFetch(`/projects/${projectId}/${typeSegment}`));
+  }
 );
 
 tool(
@@ -575,12 +585,23 @@ tool(
   "Create a new folder in a project for test cases, cycles, or plans.",
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
-    name: z.string().describe("Folder name"),
+    folderName: z.string().describe("Folder name"),
     folderType: z.enum(["TESTCASE", "TESTCYCLE", "TESTPLAN"]).describe("Folder type"),
-    parentFolderId: z.number().int().optional().describe("Parent folder ID (omit for root)"),
+    parentId: z.number().int().describe("Parent folder ID (use 0 for root)"),
+    description: z.string().optional().describe("Folder description"),
   },
-  async (input) =>
-    ok(await qtmFetch("/folders", { method: "POST", body: JSON.stringify(input) }))
+  async ({ projectId, folderType, folderName, parentId, description }) => {
+    const typeSegment =
+      folderType === "TESTCASE" ? "testcase-folders"
+      : folderType === "TESTCYCLE" ? "testcycle-folders"
+      : "testplan-folders";
+    return ok(
+      await qtmFetch(`/projects/${projectId}/${typeSegment}`, {
+        method: "POST",
+        body: JSON.stringify({ folderName, parentId, description }),
+      })
+    );
+  }
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -621,17 +642,19 @@ tool(
 
 tool(
   "run_automation_rules",
-  "Trigger an automation rule run for a project. Returns a background task ID with a progress URL.",
+  "Trigger an automation rule run for a test cycle. Returns a background task ID with a progress URL.",
   {
-    projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     automationRuleKey: z.string().describe("Automation rule key to run"),
-    filter: z
-      .record(z.string(), z.unknown())
-      .optional()
-      .describe("Optional filter criteria for the run"),
+    projectId: z.number().int().describe("Jira project numeric ID (e.g. 10011)"),
+    testCycleId: z.string().describe("Internal test cycle ID (from search_test_cycles)"),
   },
-  async (input) =>
-    ok(await qtmFetch("/automation-rules/run", { method: "POST", body: JSON.stringify(input) }))
+  async ({ automationRuleKey, projectId, testCycleId }) =>
+    ok(
+      await qtmFetch(`/automation-rule/${automationRuleKey}/run`, {
+        method: "POST",
+        body: JSON.stringify({ projectId, testCycleId }),
+      })
+    )
 );
 
 // ── Start server ──────────────────────────────────────────────────────────────
