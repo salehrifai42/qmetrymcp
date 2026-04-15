@@ -137,7 +137,7 @@ const tool = <Shape extends z.ZodRawShape>(
 
 tool(
   "create_test_case",
-  "Create a new test case in QMetry. Returns the created test case ID and key.",
+  "Create a new test case in QMetry. Returns the created test case object including its internal id and key (e.g. FS-TC-123). Priority, status, labels, and components use integer IDs — see field_reference.json for valid values.",
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     summary: z.string().describe("Test case title/summary"),
@@ -158,14 +158,14 @@ tool(
 
 tool(
   "get_test_case",
-  "Get a test case by its ID or key, including all versions and step details.",
+  "Get a test case by its internal ID or key (e.g. FS-TC-31950). Returns an array of versions, each with versionNo, isLatestVersion, aiGenerated flag, and any test steps.",
   { id: ID.describe("Test case ID or key (e.g. QTP-TC-1)") },
   async ({ id }) => ok(await qtmFetch(`/testcases/${id}`))
 );
 
 tool(
   "search_test_cases",
-  "Search/list test cases in a project with optional filters and pagination.",
+  "Search test cases in a project with optional filters. Returns total count and paginated data with id, key, version info, archived flag. Use status/priority name strings (e.g. 'To Do', 'High') not IDs. projectId must be numeric (10011).",
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     labels: z.array(z.string()).optional().describe("Filter by labels"),
@@ -184,7 +184,7 @@ tool(
 
 tool(
   "update_test_case",
-  "Update a specific version of a test case (summary, description, priority, status, custom fields, etc.).",
+  "Update fields on a specific version of a test case. Requires both the test case id and versionNo (usually 1 for latest). Priority and status take integer IDs. Returns 204 on success.",
   {
     id: ID.describe("Test case ID"),
     versionNo: z.number().int().describe("Version number to update"),
@@ -209,7 +209,7 @@ tool(
 
 tool(
   "delete_test_case",
-  "Delete a specific version of a test case.",
+  "Permanently delete a specific version of a test case. If it is the only version, the test case is removed entirely. Returns 204 on success.",
   {
     id: ID.describe("Test case ID"),
     versionNo: z.number().int().describe("Version number to delete"),
@@ -222,7 +222,7 @@ tool(
 
 tool(
   "clone_test_cases",
-  "Clone one or more test cases to a target project/folder. Returns a background task ID with a progress URL.",
+  "Bulk clone one or more test cases into a target project and optional folder. Returns a background task object with a taskId and progressUrl to poll for completion.",
   {
     testcaseIds: z.array(z.number().int()).describe("Test case IDs to clone"),
     projectId: z.string().describe("Target project ID or key"),
@@ -234,7 +234,7 @@ tool(
 
 tool(
   "create_test_steps",
-  "Add one or more test steps to a specific version of a test case.",
+  "Add one or more test steps to a specific version of a test case. Each step has stepDetails (required), expectedResult, and testData. Returns the created step objects with their IDs.",
   {
     id: ID.describe("Test case ID"),
     versionNo: z.number().int().describe("Test case version number"),
@@ -259,7 +259,7 @@ tool(
 
 tool(
   "update_test_steps",
-  "Update existing test steps for a specific version of a test case.",
+  "Update existing test steps on a test case version. Each step must include its step id (from create_test_steps or get_test_case response). Returns the updated step objects.",
   {
     id: ID.describe("Test case ID"),
     versionNo: z.number().int().describe("Test case version number"),
@@ -289,7 +289,7 @@ tool(
 
 tool(
   "create_test_cycle",
-  "Create a new test cycle in QMetry. Returns the created test cycle details.",
+  "Create a new test cycle in QMetry. Returns the created cycle with its internal id and key (e.g. FS-TR-123). Use list_folders with folderType=TESTCYCLE to find valid folderId values.",
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     summary: z.string().describe("Test cycle name/summary"),
@@ -308,14 +308,14 @@ tool(
 
 tool(
   "get_test_cycle",
-  "Get a test cycle by its ID or key, including execution summary.",
+  "Get a test cycle by its key (e.g. FS-TR-747) or internal id. Returns id, key, status, priority, projectId, archived flag. The internal 'id' returned here is required by get_test_cycle_executions and update_test_execution.",
   { id: ID.describe("Test cycle ID or key") },
   async ({ id }) => ok(await qtmFetch(`/testcycles/${id}`))
 );
 
 tool(
   "search_test_cycles",
-  "Search/list test cycles in a project with optional filters and pagination.",
+  "Search test cycles in a project. Returns total count and paginated list with id, key, status, priority, archived. The 'id' field in results is the internal ID needed for execution tools.",
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     ...SearchFilters,
@@ -332,7 +332,7 @@ tool(
 
 tool(
   "update_test_cycle",
-  "Update a test cycle's summary, description, priority, status, or custom fields.",
+  "Update a test cycle's metadata (summary, description, priority, status, dates, custom fields). Pass the internal id or key. Returns 204 on success.",
   {
     id: ID.describe("Test cycle ID"),
     summary: z.string().optional(),
@@ -352,7 +352,7 @@ tool(
 
 tool(
   "delete_test_cycle",
-  "Delete a test cycle by ID.",
+  "Permanently delete a test cycle and all its execution records. This is irreversible. Returns 204 on success.",
   { id: ID.describe("Test cycle ID") },
   async ({ id }) => {
     await qtmFetch(`/testcycles/${id}`, { method: "DELETE" });
@@ -366,7 +366,7 @@ tool(
 
 tool(
   "get_test_cycle_executions",
-  "List all test case executions (linked test cases and their run status) within a test cycle.",
+  "List all test case executions linked to a test cycle. Requires the internal cycle id (from get_test_cycle, not the key). Returns testCycleTestCaseMapId (needed for bulk_update), testCaseExecutionId (needed for update_test_execution), key, status, and priority per test case.",
   {
     id: ID.describe("Test cycle ID (internal ID from search_test_cycles)"),
     ...Pagination,
@@ -382,7 +382,7 @@ tool(
 
 tool(
   "update_test_execution",
-  "Update the execution result, environment, build, or comment for a single test case execution inside a test cycle.",
+  "Update a single test case execution result inside a test cycle. Use testCaseExecutionId from get_test_cycle_executions. executionResultId: 239443=Not Executed, 239444=Pass, 239441=Fail, 239442=Work In Progress, 239440=Blocked. Returns 204 on success.",
   {
     cycleId: ID.describe("Test cycle ID"),
     testCaseExecutionId: ID.describe("Test case execution ID"),
@@ -403,7 +403,7 @@ tool(
 
 tool(
   "update_test_step_execution",
-  "Update the result, actual result, or comment for a single test step execution.",
+  "Update a single step-level execution result within a test case execution. testStepExecutionId comes from get_test_cycle_executions step data. Returns 200 with updated step data.",
   {
     cycleId: ID.describe("Test cycle ID"),
     testStepExecutionId: ID.describe("Test step execution ID"),
@@ -422,7 +422,7 @@ tool(
 
 tool(
   "bulk_update_test_executions",
-  "Bulk-update execution result, environment, or build for multiple test case executions in a test cycle.",
+  "Apply the same execution result, environment, or build to multiple test case executions at once. Use testCycleTestCaseMapIds from get_test_cycle_executions (the 'testCycleTestCaseMapId' field). Returns 204 on success.",
   {
     cycleId: ID.describe("Test cycle ID"),
     testCycleTestCaseMapIds: z
@@ -447,7 +447,7 @@ tool(
 
 tool(
   "create_test_plan",
-  "Create a new test plan in QMetry. Returns the created test plan ID and key.",
+  "Create a new test plan in QMetry. Returns the created plan with its internal id and key (e.g. FS-TP-44). Use list_folders with folderType=TESTPLAN to find valid folderId values.",
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     summary: z.string().describe("Test plan name/summary"),
@@ -464,14 +464,14 @@ tool(
 
 tool(
   "get_test_plan",
-  "Get a test plan by its ID or key.",
+  "Get a test plan by its key (e.g. FS-TP-43) or internal id. Returns id, key, projectId, archived flag. Use the internal 'id' when calling link/unlink/get_linked_test_cycles.",
   { id: ID.describe("Test plan ID or key") },
   async ({ id }) => ok(await qtmFetch(`/testplans/${id}`))
 );
 
 tool(
   "search_test_plans",
-  "Search/list test plans in a project with optional filters and pagination.",
+  "Search test plans in a project. Returns total count and paginated list with id, key, projectId, archived. The 'id' field is the internal ID needed for linking cycles.",
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     ...SearchFilters,
@@ -488,7 +488,7 @@ tool(
 
 tool(
   "update_test_plan",
-  "Update a test plan's priority or custom fields.",
+  "Update a test plan's priority or custom fields. Returns 204 on success.",
   {
     id: ID.describe("Test plan ID"),
     priority: z.string().optional(),
@@ -502,7 +502,7 @@ tool(
 
 tool(
   "delete_test_plan",
-  "Delete a test plan by ID.",
+  "Permanently delete a test plan. This does not delete the linked test cycles. Returns 204 on success.",
   { id: ID.describe("Test plan ID") },
   async ({ id }) => {
     await qtmFetch(`/testplans/${id}`, { method: "DELETE" });
@@ -512,7 +512,7 @@ tool(
 
 tool(
   "link_test_cycles_to_plan",
-  "Link one or more test cycles to a test plan.",
+  "Link one or more existing test cycles to a test plan. Use the plan's internal id (from get_test_plan or search_test_plans). testcycleIds are numeric integer IDs. Returns 204 on success.",
   {
     id: ID.describe("Test plan ID"),
     testcycleIds: z.array(z.number().int()).describe("Test cycle IDs to link"),
@@ -528,7 +528,7 @@ tool(
 
 tool(
   "get_linked_test_cycles",
-  "Get all test cycles linked to a test plan, with pagination.",
+  "List all test cycles currently linked to a test plan. Returns paginated list with id, key, status, priority per cycle. Use the plan's internal id (not key).",
   {
     id: ID.describe("Test plan ID"),
     ...Pagination,
@@ -544,7 +544,7 @@ tool(
 
 tool(
   "unlink_test_cycles_from_plan",
-  "Unlink one or more test cycles from a test plan.",
+  "Remove the link between one or more test cycles and a test plan. Does not delete the cycles themselves. Returns 204 on success.",
   {
     id: ID.describe("Test plan ID"),
     testcycleIds: z.array(z.number().int()).describe("Test cycle IDs to unlink"),
@@ -564,7 +564,7 @@ tool(
 
 tool(
   "list_folders",
-  "List all folders of a given type (TESTCASE, TESTCYCLE, TESTPLAN) in a project.",
+  "List all folders of a given type in a project, returned as a nested tree with id, name, parentId, and children. Use the folder id values as folderId when creating or filtering test cases, cycles, or plans.",
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     folderType: z
@@ -582,7 +582,7 @@ tool(
 
 tool(
   "create_folder",
-  "Create a new folder in a project for test cases, cycles, or plans.",
+  "Create a new folder under an existing parent folder. Use parentId=0 for root-level. folderName is required. Returns the created folder with its id. Use list_folders first to find valid parentId values.",
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     folderName: z.string().describe("Folder name"),
@@ -610,7 +610,7 @@ tool(
 
 tool(
   "link_automation_rule",
-  "Link an automation rule to a test cycle.",
+  "Associate an automation rule with a test cycle so it can be triggered for that cycle. automationRuleKey is the rule's string key from your QMetry automation config. Returns 200 on success.",
   {
     cycleId: ID.describe("Test cycle ID"),
     automationRuleKey: z.string().describe("Automation rule key to link"),
@@ -626,7 +626,7 @@ tool(
 
 tool(
   "unlink_automation_rule",
-  "Unlink an automation rule from a test cycle.",
+  "Remove the association between an automation rule and a test cycle. Returns 200 on success.",
   {
     cycleId: ID.describe("Test cycle ID"),
     automationRuleKey: z.string().describe("Automation rule key to unlink"),
@@ -642,7 +642,7 @@ tool(
 
 tool(
   "run_automation_rules",
-  "Trigger an automation rule run for a test cycle. Returns a background task ID with a progress URL.",
+  "Trigger an automation rule to run against a specific test cycle. testCycleId is the internal id string (from get_test_cycle). Returns a background task object with taskId and progressUrl to poll for completion.",
   {
     automationRuleKey: z.string().describe("Automation rule key to run"),
     projectId: z.number().int().describe("Jira project numeric ID (e.g. 10011)"),
