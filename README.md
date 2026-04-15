@@ -26,13 +26,7 @@ All tools validate inputs with Zod, paginate list endpoints via `startAt` / `max
 
 ## Setup (same steps for all clients)
 
-**1. Set your API key** — add to `~/.zshrc` or `~/.bashrc` so it persists across sessions:
-
-```bash
-export QTM4J_API_KEY=your-api-key-here
-```
-
-**2. Clone, install, build:**
+**1. Clone, install, build:**
 
 ```bash
 git clone https://github.com/salehrifai42/qmetrymcp.git
@@ -41,10 +35,25 @@ npm install
 npm run build
 ```
 
-**3. Open your editor/IDE in the repo directory.** Both clients pick up `QTM4J_API_KEY` from your shell environment automatically — no extra config needed:
+**2. Add your API key** — copy the example and fill in your key:
 
-- **Claude Code** — `.mcp.json` is already in the repo. Run `claude` in this directory and the `qtm4j` server connects automatically.
-- **GitHub Copilot (VS Code)** — `.vscode/mcp.json` is already in the repo. Open the folder in VS Code, switch Copilot Chat to **Agent** mode, and the `qtm4j` tools appear in the tool picker.
+```bash
+cp .env.example .env
+```
+
+Then edit `.env`:
+
+```
+QTM4J_API_KEY=your-api-key-here
+QTM4J_REGION=US
+```
+
+`.env` is git-ignored and never committed.
+
+**3. Open your editor/IDE in the repo directory.** The server loads `.env` automatically on startup — no extra config needed:
+
+- **Claude Code** — run `claude` in this directory. `.mcp.json` is pre-configured and the `qtm4j` server connects automatically.
+- **GitHub Copilot (VS Code)** — open the folder in VS Code, switch Copilot Chat to **Agent** mode. `.vscode/mcp.json` is pre-configured and the `qtm4j` tools appear automatically.
 
 ## Configuration
 
