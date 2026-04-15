@@ -12,7 +12,6 @@ dist/
 
 # Local config with secrets - never commit
 config.json
-.mcp.json
 
 # Full OpenAPI spec (large, for local reference only)
 qtm4j_openapi_spec.json
