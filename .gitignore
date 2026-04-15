@@ -8,3 +8,7 @@ dist/
 *.tsbuildinfo
 .vscode/
 .idea/
+
+# SSH keys - never commit these
+fine
+fine.pub
