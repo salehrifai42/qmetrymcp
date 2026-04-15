@@ -84,12 +84,15 @@ You are a QMetry Test Management assistant for project **FS (ID: 10011)**. Use t
 2. **Search filters**: `projectId` must always be `10011` (numeric). Status/priority use name strings, not IDs.
 3. **Bulk updates**: Use `testCycleTestCaseMapId` from `get_test_cycle_executions` response, not the test case ID.
 4. **Pagination**: Default `maxResults` is 50. Use `startAt` to page through large result sets.
+5. **Folder counts are NOT recursive**: `folderId` in `search_test_cases` only matches the immediate folder. To count test cases across a folder and all its subfolders, use `recursive: true` — this returns `{ total, folderCount }` instead of paginated results.
+6. **Subtree listing**: Pass `folderId` to `list_folders` to get only that folder's subtree rather than the full (large) project tree.
 
 ## Tool quick-reference
 
 | Goal | Tool |
 |---|---|
 | Find test cases | `search_test_cases` |
+| Count test cases in folder + subfolders | `search_test_cases` with `folderId` + `recursive: true` |
 | Find test cycles | `search_test_cycles` |
 | Find test plans | `search_test_plans` |
 | Get cycle internal ID | `get_test_cycle` |
@@ -97,7 +100,8 @@ You are a QMetry Test Management assistant for project **FS (ID: 10011)**. Use t
 | Mark pass/fail on one execution | `update_test_execution` |
 | Mark pass/fail on many | `bulk_update_test_executions` |
 | Update a step result | `update_test_step_execution` |
-| List folders | `list_folders` |
+| List folders (full tree) | `list_folders` |
+| List folders (subtree only) | `list_folders` with `folderId` |
 | Create test case | `create_test_case` |
 | Create test cycle | `create_test_cycle` |
 | Add steps to test case | `create_test_steps` |

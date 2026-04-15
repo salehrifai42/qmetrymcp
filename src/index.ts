@@ -81,6 +81,57 @@ function qs(params: Record<string, string | number | undefined>): string {
   return s ? `?${s}` : "";
 }
 
+/** Recursively collect all folder IDs in a subtree (inclusive of root). */
+function collectFolderIds(nodes: any[], targetId?: number): number[] {
+  function collectAll(items: any[]): number[] {
+    const ids: number[] = [];
+    for (const item of items) {
+      ids.push(item.id);
+      if (item.children?.length) ids.push(...collectAll(item.children));
+    }
+    return ids;
+  }
+  if (targetId === undefined) return collectAll(nodes);
+  // Find the target node anywhere in the tree, then collect it + all descendants
+  for (const node of nodes) {
+    if (node.id === targetId) {
+      return [node.id, ...collectAll(node.children ?? [])];
+    }
+    const found = collectFolderIds(node.children ?? [], targetId);
+    if (found.length) return found;
+  }
+  return [];
+}
+
+/** Fetch all folder IDs under a given folderId (or all folders if omitted). */
+async function getFolderIds(projectId: number | string, folderType: "testcase-folders" | "testcycle-folders" | "testplan-folders", folderId?: number): Promise<number[]> {
+  const data = await qtmFetch(`/projects/${projectId}/${folderType}`) as any;
+  const nodes = data?.data ?? data ?? [];
+  return folderId !== undefined ? collectFolderIds(nodes, folderId) : collectFolderIds(nodes);
+}
+
+/** Search a single folderId, returning only the total count. */
+async function countInFolder(endpoint: string, projectId: number | string, folderId: number, filters: Record<string, unknown>): Promise<number> {
+  const res = await qtmFetch(`${endpoint}?maxResults=1`, {
+    method: "POST",
+    body: JSON.stringify({ filter: { projectId, folderId, ...filters } }),
+  }) as any;
+  return res?.total ?? 0;
+}
+
+/** Recursively count items across all subfolders in parallel batches of 20. */
+async function recursiveCount(endpoint: string, projectId: number | string, folderType: "testcase-folders" | "testcycle-folders" | "testplan-folders", folderId: number, filters: Record<string, unknown>): Promise<{ total: number; folderCount: number }> {
+  const ids = await getFolderIds(projectId, folderType, folderId);
+  const chunks: number[][] = [];
+  for (let i = 0; i < ids.length; i += 20) chunks.push(ids.slice(i, i + 20));
+  let total = 0;
+  for (const chunk of chunks) {
+    const counts = await Promise.all(chunk.map(id => countInFolder(endpoint, projectId, id, filters)));
+    total += counts.reduce((a, b) => a + b, 0);
+  }
+  return { total, folderCount: ids.length };
+}
+
 // ── Shared sub-schemas ────────────────────────────────────────────────────────
 
 const CustomField = z.object({
@@ -165,21 +216,27 @@ tool(
 
 tool(
   "search_test_cases",
-  "Search test cases in a project with optional filters. Returns total count and paginated data with id, key, version info, archived flag. Use status/priority name strings (e.g. 'To Do', 'High') not IDs. projectId must be numeric (10011).",
+  "Search test cases in a project with optional filters. Returns total count and paginated data with id, key, version info, archived flag. Use status/priority name strings (e.g. 'To Do', 'High') not IDs. projectId must be numeric (10011). Set recursive=true with a folderId to count across all subfolders (returns total only, no data).",
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     labels: z.array(z.string()).optional().describe("Filter by labels"),
     components: z.array(z.string()).optional().describe("Filter by components"),
+    recursive: z.boolean().optional().describe("If true and folderId is set, counts test cases across all subfolders recursively. Returns { total, folderCount } only."),
     ...SearchFilters,
     ...Pagination,
   },
-  async ({ startAt, maxResults, sort, fields, projectId, ...filters }) =>
-    ok(
+  async ({ startAt, maxResults, sort, fields, projectId, recursive, folderId, ...filters }) => {
+    if (recursive && folderId !== undefined) {
+      const result = await recursiveCount("/testcases/search", projectId, "testcase-folders", folderId, filters);
+      return ok(result);
+    }
+    return ok(
       await qtmFetch(`/testcases/search${qs({ startAt, maxResults, sort, fields })}`, {
         method: "POST",
-        body: JSON.stringify({ filter: { projectId, ...filters } }),
+        body: JSON.stringify({ filter: { projectId, folderId, ...filters } }),
       })
-    )
+    );
+  }
 );
 
 tool(
@@ -564,19 +621,35 @@ tool(
 
 tool(
   "list_folders",
-  "List all folders of a given type in a project, returned as a nested tree with id, name, parentId, and children. Use the folder id values as folderId when creating or filtering test cases, cycles, or plans.",
+  "List folders of a given type in a project as a nested tree with id, name, parentId, and children. Provide folderId to return only that subtree instead of the full project tree (recommended for large projects).",
   {
     projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
     folderType: z
       .enum(["TESTCASE", "TESTCYCLE", "TESTPLAN"])
       .describe("Folder type to list"),
+    folderId: z.number().int().optional().describe("Return only this folder and its children (subtree). Omit to get the full project tree."),
   },
-  async ({ projectId, folderType }) => {
-    const typeSegment =
-      folderType === "TESTCASE" ? "testcase-folders"
-      : folderType === "TESTCYCLE" ? "testcycle-folders"
-      : "testplan-folders";
-    return ok(await qtmFetch(`/projects/${projectId}/${typeSegment}`));
+  async ({ projectId, folderType, folderId }) => {
+    const folderSegments: Record<string, string> = {
+      TESTCASE: "testcase-folders",
+      TESTCYCLE: "testcycle-folders",
+      TESTPLAN: "testplan-folders",
+    };
+    const typeSegment = folderSegments[folderType];
+    const data = await qtmFetch(`/projects/${projectId}/${typeSegment}`) as any;
+    if (folderId === undefined) return ok(data);
+    const nodes = data?.data ?? data ?? [];
+    // Find and return only the subtree rooted at folderId
+    function findSubtree(items: any[]): any | null {
+      for (const item of items) {
+        if (item.id === folderId) return item;
+        const found = findSubtree(item.children ?? []);
+        if (found) return found;
+      }
+      return null;
+    }
+    const subtree = findSubtree(nodes);
+    return ok(subtree ?? { error: `Folder ${folderId} not found` });
   }
 );
 
@@ -591,10 +664,12 @@ tool(
     description: z.string().optional().describe("Folder description"),
   },
   async ({ projectId, folderType, folderName, parentId, description }) => {
-    const typeSegment =
-      folderType === "TESTCASE" ? "testcase-folders"
-      : folderType === "TESTCYCLE" ? "testcycle-folders"
-      : "testplan-folders";
+    const folderSegments: Record<string, string> = {
+      TESTCASE: "testcase-folders",
+      TESTCYCLE: "testcycle-folders",
+      TESTPLAN: "testplan-folders",
+    };
+    const typeSegment = folderSegments[folderType];
     return ok(
       await qtmFetch(`/projects/${projectId}/${typeSegment}`, {
         method: "POST",
