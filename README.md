@@ -24,7 +24,15 @@ All tools validate inputs with Zod, paginate list endpoints via `startAt` / `max
 - Node.js **18+** (uses native `fetch`)
 - A QMetry API key (from QMetry → *API Keys*)
 
-## Install
+## Setup (same steps for all clients)
+
+**1. Set your API key** — add to `~/.zshrc` or `~/.bashrc` so it persists across sessions:
+
+```bash
+export QTM4J_API_KEY=your-api-key-here
+```
+
+**2. Clone, install, build:**
 
 ```bash
 git clone https://github.com/salehrifai42/qmetrymcp.git
@@ -33,22 +41,10 @@ npm install
 npm run build
 ```
 
-## Quick setup
+**3. Open your editor/IDE in the repo directory.** Both clients pick up `QTM4J_API_KEY` from your shell environment automatically — no extra config needed:
 
-**Step 1 — set your API key in the shell** (add to `~/.zshrc` or `~/.bashrc` so it persists):
-
-```bash
-export QTM4J_API_KEY=your-api-key-here
-```
-
-**Step 2 — build:**
-
-```bash
-npm install
-npm run build
-```
-
-That's it. Both Claude Code and GitHub Copilot configs are already in the repo and will pick up the env var automatically (see below).
+- **Claude Code** — `.mcp.json` is already in the repo. Run `claude` in this directory and the `qtm4j` server connects automatically.
+- **GitHub Copilot (VS Code)** — `.vscode/mcp.json` is already in the repo. Open the folder in VS Code, switch Copilot Chat to **Agent** mode, and the `qtm4j` tools appear in the tool picker.
 
 ## Configuration
 
@@ -57,43 +53,41 @@ The server reads two environment variables:
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
 | `QTM4J_API_KEY` | yes | — | QMetry API key, sent on every request as the `apiKey` header |
-| `QTM4J_REGION` | no  | `US` | `US` → `https://qtmcloud.qmetry.com/rest/api/latest`, `AU` → `https://syd-qtmcloud.qmetry.com/rest/api/latest` |
+| `QTM4J_REGION` | no | `US` | `US` → `https://qtmcloud.qmetry.com/rest/api/latest`, `AU` → `https://syd-qtmcloud.qmetry.com/rest/api/latest` |
 
 ### Local config reference
 
-A `config.template.json` is included at the repo root with all common field values (project ID, statuses, priorities, execution result IDs, folder IDs, custom fields, etc.). Copy it and fill in your values:
+A `config.template.json` is included with common field values (project ID, statuses, priorities, execution result IDs, folder IDs, etc.). Copy it for local reference:
 
 ```bash
 cp config.template.json config.json
 ```
 
-`config.json` is git-ignored — safe to store your API key and account IDs there for local reference. The MCP server itself reads only from environment variables.
+`config.json` is git-ignored. The MCP server reads only from environment variables.
 
-## Running
+## Running manually
 
 ```bash
 QTM4J_API_KEY=your-key npm start
 ```
 
-The server speaks MCP over stdio — you don't normally run it directly; your MCP client (Claude Desktop, Claude Code, etc.) spawns it.
+The server speaks MCP over stdio — you don't normally run it directly; your MCP client spawns it.
 
 ## MCP client configuration
 
 ### Claude Code (CLI)
 
-A `.mcp.json` is already committed to this repo. After building, open Claude Code in this directory and the `qtm4j` server connects automatically — no extra config needed. It reads `QTM4J_API_KEY` from your shell environment.
-
-Verify it's registered:
+`.mcp.json` ships with this repo and is auto-detected when you open Claude Code in the project directory. Verify:
 
 ```bash
 claude mcp list
 ```
 
-In a session you can also run `/mcp` to see connected servers and their tools.
+Run `/mcp` inside a session to see connected servers and their tools.
 
 ### Claude Desktop
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS (or the platform equivalent) and restart Claude Desktop:
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS and restart Claude Desktop:
 
 ```json
 {
@@ -112,7 +106,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS 
 
 ### GitHub Copilot (VS Code)
 
-A `.vscode/mcp.json` is already committed to this repo. After cloning and building, open the Copilot Chat panel, switch to **Agent** mode, and VS Code will prompt you for your API key (stored securely, never committed). The `qtm4j` tools will then appear in the tool picker.
+`.vscode/mcp.json` ships with this repo and is auto-detected when you open the folder in VS Code. Switch Copilot Chat to **Agent** mode and the `qtm4j` tools appear automatically.
 
 ### Trying it out
 
