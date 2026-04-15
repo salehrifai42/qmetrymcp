@@ -26,27 +26,11 @@ All tools validate inputs with Zod, paginate list endpoints via `startAt` / `max
 
 ## Install
 
-No install needed — run it directly with `npx`:
-
 ```bash
-npx qtm4j-mcp
-```
-
-…or install globally:
-
-```bash
-npm install -g qtm4j-mcp
-qtm4j-mcp
-```
-
-…or from source:
-
-```bash
-git clone https://github.com/salehrifai42/qtm4j-mcp.git
-cd qtm4j-mcp
+git clone https://github.com/salehrifai42/qmetrymcp.git
+cd qmetrymcp
 npm install
 npm run build
-npm start
 ```
 
 ## Configuration
@@ -68,7 +52,7 @@ The server speaks MCP over stdio — you don't normally run it directly; your MC
 
 ## MCP client configuration
 
-All clients use the same shape: `npx -y qtm4j-mcp` as the command, and `QTM4J_API_KEY` (plus optional `QTM4J_REGION`) in the env. No cloning, no absolute paths.
+All clients run the server directly with `node`. Replace `/path/to/qmetrymcp` with the absolute path to where you cloned the repo.
 
 ### Claude Desktop
 
@@ -78,8 +62,8 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS 
 {
   "mcpServers": {
     "qtm4j": {
-      "command": "npx",
-      "args": ["-y", "qtm4j-mcp"],
+      "command": "node",
+      "args": ["/path/to/qmetrymcp/dist/index.js"],
       "env": {
         "QTM4J_API_KEY": "your-api-key-here",
         "QTM4J_REGION": "US"
@@ -91,13 +75,13 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS 
 
 ### Claude Code (CLI)
 
-Easiest — use the `claude mcp add` command:
+Use the `claude mcp add` command:
 
 ```bash
 claude mcp add qtm4j \
   -e QTM4J_API_KEY=your-api-key-here \
   -e QTM4J_REGION=US \
-  -- npx -y qtm4j-mcp
+  -- node /path/to/qmetrymcp/dist/index.js
 ```
 
 This writes to your user-scoped config (`~/.claude.json`). To scope it to a single repo instead, drop a `.mcp.json` at the project root with the same `mcpServers` shape as the Claude Desktop example above — Claude Code will pick it up automatically.
@@ -120,8 +104,8 @@ Copilot's agent mode supports MCP via a `.vscode/mcp.json` file in your workspac
   "servers": {
     "qtm4j": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "qtm4j-mcp"],
+      "command": "node",
+      "args": ["/path/to/qmetrymcp/dist/index.js"],
       "env": {
         "QTM4J_API_KEY": "your-api-key-here",
         "QTM4J_REGION": "US"
@@ -141,8 +125,8 @@ After saving, open the Copilot Chat panel, switch to **Agent** mode, and the `qt
   "servers": {
     "qtm4j": {
       "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "qtm4j-mcp"],
+      "command": "node",
+      "args": ["/path/to/qmetrymcp/dist/index.js"],
       "env": {
         "QTM4J_API_KEY": "${input:qtm4jKey}",
         "QTM4J_REGION": "US"
