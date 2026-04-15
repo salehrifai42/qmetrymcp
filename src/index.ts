@@ -366,14 +366,14 @@ tool(
   "get_test_cycle_executions",
   "List all test case executions (linked test cases and their run status) within a test cycle.",
   {
-    id: ID.describe("Test cycle ID"),
+    id: ID.describe("Test cycle ID (internal ID from search_test_cycles)"),
     ...Pagination,
   },
   async ({ id, startAt, maxResults, sort, fields }) =>
     ok(
-      await qtmFetch(`/testcycles/${id}/testcases${qs({ startAt, maxResults, sort, fields })}`, {
+      await qtmFetch(`/testcycles/${id}/testcases/search${qs({ startAt, maxResults, sort, fields })}`, {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({ filter: {} }),
       })
     )
 );
@@ -532,12 +532,7 @@ tool(
     ...Pagination,
   },
   async ({ id, startAt, maxResults, sort, fields }) =>
-    ok(
-      await qtmFetch(`/testplans/${id}/testcycles${qs({ startAt, maxResults, sort, fields })}`, {
-        method: "POST",
-        body: JSON.stringify({}),
-      })
-    )
+    ok(await qtmFetch(`/testplans/${id}/testcycles${qs({ startAt, maxResults, sort, fields })}`))
 );
 
 tool(

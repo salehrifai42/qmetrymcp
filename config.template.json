@@ -1,0 +1,63 @@
+{
+  "_instructions": "Copy this file to config.json, fill in your values, then reference them when calling tools.",
+
+  "connection": {
+    "apiKey": "YOUR_QMETRY_API_KEY_HERE",
+    "region": "US"
+  },
+
+  "project": {
+    "projectId": 10011,
+    "projectKey": "FS"
+  },
+
+  "defaults": {
+    "maxResults": 50,
+    "sort": "id:asc"
+  },
+
+  "statuses": {
+    "testCase": ["Draft", "Approved", "Deprecated"],
+    "testCycle": ["Not Started", "In Progress", "Done"],
+    "testExecution": ["Unexecuted", "Pass", "Fail", "In Progress", "Blocked", "Not Applicable"]
+  },
+
+  "priorities": ["Trivial", "Minor", "Medium", "Major", "Critical"],
+
+  "executionResultIds": {
+    "Unexecuted": 1,
+    "Pass": 2,
+    "Fail": 3,
+    "In Progress": 4,
+    "Blocked": 5,
+    "Not Applicable": 6
+  },
+
+  "users": {
+    "exampleUser": {
+      "displayName": "John Doe",
+      "accountId": "YOUR_JIRA_ACCOUNT_ID_HERE"
+    }
+  },
+
+  "folders": {
+    "testCaseFolderId": 0,
+    "testCycleFolderId": 0,
+    "testPlanFolderId": 0
+  },
+
+  "environments": {
+    "exampleEnvId": 0
+  },
+
+  "builds": {
+    "exampleBuildId": 0
+  },
+
+  "customFields": [
+    {
+      "id": "qcf_1",
+      "value": "YOUR_CUSTOM_FIELD_VALUE"
+    }
+  ]
+}

@@ -9,6 +9,9 @@ dist/
 .vscode/
 .idea/
 
+# Local config with secrets - never commit
+config.json
+
 # SSH keys - never commit these
 fine
 fine.pub
