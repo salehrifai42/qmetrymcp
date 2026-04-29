@@ -1,0 +1,34 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.salehrifai42/qtm4j-mcp-server",
+  "description": "MCP server for QMetry Test Management for Jira Cloud (QTM4J) — search/create/update test cases, run cycles, manage executions, plans, folders, and automation rules.",
+  "repository": {
+    "url": "https://github.com/salehrifai42/qmetrymcp",
+    "source": "github"
+  },
+  "version": "0.1.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "qtm4j-mcp-server",
+      "version": "0.1.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "QTM4J_API_KEY",
+          "description": "QMetry API key. Generate from QMetry → API Keys.",
+          "isRequired": true,
+          "isSecret": true
+        },
+        {
+          "name": "QTM4J_REGION",
+          "description": "QMetry region: 'US' (default) or 'AU'.",
+          "isRequired": false,
+          "default": "US"
+        }
+      ]
+    }
+  ]
+}

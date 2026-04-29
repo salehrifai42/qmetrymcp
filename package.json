@@ -1,6 +1,7 @@
 {
   "name": "qtm4j-mcp-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "mcpName": "io.github.salehrifai42/qtm4j-mcp-server",
   "description": "MCP (Model Context Protocol) server for QMetry Test Management for Jira Cloud (QTM4J) REST API — exposes test case, cycle, execution, plan, folder, and automation tools.",
   "main": "dist/index.js",
   "type": "module",
@@ -37,12 +38,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/salehrifai42/qtm4j-mcp.git"
+    "url": "git+https://github.com/salehrifai42/qmetrymcp.git"
   },
   "bugs": {
-    "url": "https://github.com/salehrifai42/qtm4j-mcp/issues"
+    "url": "https://github.com/salehrifai42/qmetrymcp/issues"
   },
-  "homepage": "https://github.com/salehrifai42/qtm4j-mcp#readme",
+  "homepage": "https://github.com/salehrifai42/qmetrymcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "dotenv": "^17.4.2",
