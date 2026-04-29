@@ -1,8 +1,16 @@
 # QTM4J MCP Server
 
 [![npm](https://img.shields.io/npm/v/qtm4j-mcp-server.svg)](https://www.npmjs.com/package/qtm4j-mcp-server)
+[![npm downloads](https://img.shields.io/npm/dm/qtm4j-mcp-server.svg)](https://www.npmjs.com/package/qtm4j-mcp-server)
+[![Node](https://img.shields.io/node/v/qtm4j-mcp-server.svg)](https://www.npmjs.com/package/qtm4j-mcp-server)
+[![License](https://img.shields.io/npm/l/qtm4j-mcp-server.svg)](LICENSE)
 
-An [MCP](https://modelcontextprotocol.io) server that exposes the [QMetry Test Management for Jira Cloud (QTM4J) REST API](https://app.swaggerhub.com/apis-docs/qmetry-ada/qtm4j_cloud/restapi) as tools any MCP-compatible client can call (Claude Desktop, Claude Code, VS Code Copilot, Cursor, etc.).
+An [MCP](https://modelcontextprotocol.io) server with **26 tools** for [QMetry Test Management for Jira (QTM4J)](https://www.qmetry.com/qmetry-test-management-jira). Search and manage test cases, cycles, executions, plans, folders, and automation rules from Claude Desktop, Claude Code, VS Code Copilot, Cursor, or any MCP-compatible client.
+
+**Distribution**:
+- npm: [`qtm4j-mcp-server`](https://www.npmjs.com/package/qtm4j-mcp-server)
+- MCP Registry: `io.github.salehrifai42/qtm4j-mcp-server`
+- GitHub: [`salehrifai42/qmetrymcp`](https://github.com/salehrifai42/qmetrymcp)
 
 ## Quick start (no clone required)
 
@@ -10,7 +18,10 @@ You need a QMetry API key (QMetry → *API Keys*) and Node.js 18+.
 
 ### Claude Desktop
 
-Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows) and restart Claude:
+Edit your config file and restart Claude:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- Linux: `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
@@ -30,10 +41,7 @@ Edit `~/Library/Application Support/Claude/claude_desktop_config.json` (macOS) o
 ### Claude Code (CLI)
 
 ```bash
-claude mcp add qtm4j \
-  -e QTM4J_API_KEY=your-api-key-here \
-  -e QTM4J_REGION=US \
-  -- npx -y qtm4j-mcp-server
+claude mcp add qtm4j -e QTM4J_API_KEY=your-api-key-here -e QTM4J_REGION=US -- npx -y qtm4j-mcp-server
 ```
 
 ### VS Code (GitHub Copilot Agent mode)
@@ -60,7 +68,7 @@ Switch Copilot Chat to **Agent** mode and the `qtm4j_*` tools appear automatical
 
 ### Cursor
 
-Add to `~/.cursor/mcp.json` (or the project-level equivalent):
+Add to `~/.cursor/mcp.json` (or `<project>/.cursor/mcp.json` for project-level):
 
 ```json
 {
@@ -81,6 +89,8 @@ Add to `~/.cursor/mcp.json` (or the project-level equivalent):
 | `QTM4J_API_KEY` | yes | — | QMetry API key, sent on every request as the `apiKey` header |
 | `QTM4J_REGION` | no | `US` | `US` → `https://qtmcloud.qmetry.com`, `AU` → `https://syd-qtmcloud.qmetry.com` |
 
+> 💡 Set `QTM4J_REGION=AU` if your QMetry instance is on the Sydney cluster.
+
 ## Tools
 
 All tools are prefixed with `qtm4j_` to avoid collisions with other MCP servers.
@@ -96,13 +106,13 @@ All tools are prefixed with `qtm4j_` to avoid collisions with other MCP servers.
 
 Every tool ships with annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so clients can decide whether to ask for confirmation. Read tools accept a `response_format` parameter (`json` default, or `markdown` for human-readable output). Large responses are automatically truncated at 25k characters with a hint to narrow the query.
 
-All tools validate inputs with Zod, paginate via `startAt`/`maxResults`, and automatically retry rate-limited (HTTP 429) responses with exponential back-off.
+All tools validate inputs with Zod, paginate via `startAt`/`maxResults`, and automatically retry rate-limited (HTTP 429) responses with exponential back-off (up to 3 attempts).
 
 ## Trying it out
 
-Once connected, ask the assistant:
+Once connected, ask your assistant something like:
 
-> *Search QMetry project 10011 for test cases with status "To Do" and show me the first 5.*
+> *Search QMetry project `<your project ID>` for test cases with status "To Do" and show me the first 5.*
 
 The client will call `qtm4j_search_test_cases` and render the response.
 
@@ -110,8 +120,10 @@ The client will call `qtm4j_search_test_cases` and render the response.
 
 ## Example tool calls
 
+> Replace `10011` below with your numeric Jira project ID. Find it in the project URL: `…?projectId=10011&projectKey=FS`.
+
 ```jsonc
-// Search test cases in project 10011
+// Search test cases
 {
   "name": "qtm4j_search_test_cases",
   "arguments": {
@@ -135,12 +147,19 @@ The client will call `qtm4j_search_test_cases` and render the response.
 }
 ```
 
+## Troubleshooting
+
+- **Tools don't appear in my client.** Restart the client after editing config. Check `claude mcp list` (Claude Code) or VS Code's MCP panel for connection status. On first run, `npx -y qtm4j-mcp-server` may take a few seconds to download the package.
+- **401 Unauthorized.** Your `QTM4J_API_KEY` is invalid or expired. Generate a new one in QMetry → *API Keys*.
+- **404 on execution or search endpoints.** Many endpoints want the **internal numeric `id`**, not the human key like `FS-TR-747`. Call `qtm4j_get_test_cycle` first to translate the key into the internal id.
+- **Empty or oversized folder response.** Pass `folderId` to `qtm4j_list_folders` to scope to a subtree — full project trees on large projects can exceed the response size limit.
+- **`projectId` rejected.** Use the **numeric** Jira project ID (e.g. `10011`), not the project key (`"FS"`). You can find it in the Jira project URL: `…?projectId=10011&projectKey=FS`.
+
 ## Notes
 
-- **`projectId` must be the numeric Jira project ID** (e.g. `10011`), not the project key (e.g. `"FS"`). You can find it in the Jira project URL: `…?projectId=10011&projectKey=FS`.
-- Search endpoints use `POST /…/search` — filters go in the body under `filter`, pagination/sort on the query string.
-- `204 No Content` responses resolve with `{ message: "…" }`.
-- The Swagger spec does **not** currently document a framework-style automation import-result endpoint (e.g. JUnit/TestNG/Cucumber ingestion); the automation tools cover the rules-run and rule-link flows exposed in the spec.
+- Search endpoints use `POST /…/search` — filters go in the body under `filter`, pagination/sort on the query string. Tool handlers wrap this for you.
+- `204 No Content` responses resolve as `{ message: "…" }`.
+- The Swagger spec does not currently document a framework-style automation import-result endpoint (e.g. JUnit/TestNG/Cucumber ingestion); the automation tools cover the rules-run and rule-link flows exposed in the spec.
 
 ## Development
 
@@ -160,6 +179,10 @@ Test changes with the [MCP Inspector](https://github.com/modelcontextprotocol/in
 QTM4J_API_KEY=your-key npx @modelcontextprotocol/inspector node dist/index.js
 ```
 
+## Bugs and contributions
+
+Found a bug or want to suggest a feature? Open an issue at <https://github.com/salehrifai42/qmetrymcp/issues>. PRs welcome.
+
 ## License
 
-MIT
+[MIT](LICENSE)
