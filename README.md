@@ -5,7 +5,7 @@
 [![Node](https://img.shields.io/node/v/qtm4j-mcp-server.svg)](https://www.npmjs.com/package/qtm4j-mcp-server)
 [![License](https://img.shields.io/npm/l/qtm4j-mcp-server.svg)](LICENSE)
 
-An [MCP](https://modelcontextprotocol.io) server with **26 tools** for [QMetry Test Management for Jira (QTM4J)](https://www.qmetry.com/qmetry-test-management-jira). Search and manage test cases, cycles, executions, plans, folders, and automation rules from Claude Desktop, Claude Code, VS Code Copilot, Cursor, or any MCP-compatible client.
+An [MCP](https://modelcontextprotocol.io) server with **42 tools** for [QMetry Test Management for Jira (QTM4J)](https://www.qmetry.com/qmetry-test-management-jira). Search and manage test cases, cycles, executions, plans, folders, automation rules, and project metadata from Claude Desktop, Claude Code, VS Code Copilot, Cursor, or any MCP-compatible client.
 
 **Distribution**:
 - npm: [`qtm4j-mcp-server`](https://www.npmjs.com/package/qtm4j-mcp-server)
@@ -103,6 +103,9 @@ All tools are prefixed with `qtm4j_` to avoid collisions with other MCP servers.
 | **Test Plans** | `qtm4j_create_test_plan`, `qtm4j_get_test_plan`, `qtm4j_search_test_plans`, `qtm4j_update_test_plan`, `qtm4j_delete_test_plan`, `qtm4j_link_test_cycles_to_plan`, `qtm4j_get_linked_test_cycles`, `qtm4j_unlink_test_cycles_from_plan` |
 | **Folders** | `qtm4j_list_folders`, `qtm4j_create_folder` |
 | **Automation** | `qtm4j_link_automation_rule`, `qtm4j_unlink_automation_rule`, `qtm4j_run_automation_rules` |
+| **Metadata** (read-only) | `qtm4j_get_projects`, `qtm4j_get_priorities`, `qtm4j_get_priority_icons`, `qtm4j_get_statuses`, `qtm4j_get_environments`, `qtm4j_get_builds`, `qtm4j_get_labels`, `qtm4j_get_components`, `qtm4j_get_execution_results`, `qtm4j_get_custom_fields`, `qtm4j_get_parameters`, `qtm4j_get_user_permissions` |
+
+See [`docs/TOOLS.md`](docs/TOOLS.md) for the full reference and [`docs/COOKBOOK.md`](docs/COOKBOOK.md) for example prompts colleagues can paste into any MCP client.
 
 Every tool ships with annotations (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`) so clients can decide whether to ask for confirmation. Read tools accept a `response_format` parameter (`json` default, or `markdown` for human-readable output). Large responses are automatically truncated at 25k characters with a hint to narrow the query.
 

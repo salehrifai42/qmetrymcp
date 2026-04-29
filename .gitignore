@@ -19,6 +19,9 @@ qtm4j_openapi_spec.json
 # Field reference with real project values
 field_reference.json
 
+# Tenant-specific metadata dumps (project IDs, folder names, internal counts)
+docs/project-*/
+
 # SSH keys - never commit these
 fine
 fine.pub
