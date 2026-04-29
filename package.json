@@ -1,11 +1,11 @@
 {
-  "name": "qtm4j-mcp",
-  "version": "1.0.0",
+  "name": "qtm4j-mcp-server",
+  "version": "0.1.0",
   "description": "MCP (Model Context Protocol) server for QMetry Test Management for Jira Cloud (QTM4J) REST API — exposes test case, cycle, execution, plan, folder, and automation tools.",
   "main": "dist/index.js",
   "type": "module",
   "bin": {
-    "qtm4j-mcp": "dist/index.js"
+    "qtm4j-mcp-server": "dist/index.js"
   },
   "files": [
     "dist",
