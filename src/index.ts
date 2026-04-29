@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import "dotenv/config";
+import dotenv from "dotenv";
+dotenv.config({ override: true });
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -372,6 +373,32 @@ tool(
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ id }) => okJSON(await qtmFetch(`/testcases/${id}`))
+);
+
+tool(
+  "qtm4j_get_test_case_version",
+  {
+    title: "Get Test Case Version Details",
+    description:
+      "Get full details of a specific test case version: summary, description, precondition, priority, status, assignee, labels, components, fixVersions, sprint, custom fields, flakyScore, passRateScore. Pass 'latest' as versionNo to skip a get_test_case lookup.",
+    inputSchema: {
+      id: ID.describe("Test case ID or key (e.g. FS-TC-32282)"),
+      versionNo: z
+        .union([z.number().int(), z.literal("latest")])
+        .default("latest")
+        .describe("Version number, or 'latest' (default)"),
+      fields: z
+        .string()
+        .optional()
+        .describe(
+          "Comma-separated subset of fields to return (e.g. 'description,priority,status'). Omit for full payload."
+        ),
+      response_format: ResponseFormat,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ id, versionNo, fields }) =>
+    okJSON(await qtmFetch(`/testcases/${id}/versions/${versionNo}${qs({ fields })}`))
 );
 
 tool(
@@ -1033,7 +1060,457 @@ tool(
     )
 );
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  AUTHORING (extra tools that help building & organising test cases)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const StepFilter = z
+  .object({
+    stepDetails: z.string().optional(),
+    testData: z.string().optional(),
+    expectedResult: z.string().optional(),
+  })
+  .optional();
+
+const FOLDER_MODULE = z.enum(["testcase", "testcycle", "testplan"]);
+
+tool(
+  "qtm4j_get_test_steps",
+  {
+    title: "Get Test Steps",
+    description:
+      "List the steps of a test case version. Optional filter narrows by step details / test data / expected result substring.",
+    inputSchema: {
+      id: ID.describe("Test case ID or key"),
+      versionNo: z.number().int().describe("Test case version number"),
+      filter: StepFilter,
+      ...Pagination,
+      response_format: ResponseFormat,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ id, versionNo, filter, startAt, maxResults, sort }) =>
+    okJSON(
+      await qtmFetch(
+        `/testcases/${id}/versions/${versionNo}/teststeps/search${qs({ startAt, maxResults, sort })}`,
+        { method: "POST", body: JSON.stringify({ filter: filter ?? {} }) }
+      )
+    )
+);
+
+tool(
+  "qtm4j_delete_test_steps",
+  {
+    title: "Delete Test Steps",
+    description:
+      "Delete steps from a test case version. Provide either stepIds (array) or a filter, or set deleteAll=true to wipe all steps.",
+    inputSchema: {
+      id: ID.describe("Test case ID or key"),
+      versionNo: z.number().int(),
+      stepIds: z.array(z.number().int()).optional(),
+      filter: StepFilter,
+      deleteAll: z.boolean().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+  },
+  async ({ id, versionNo, ...body }) => {
+    await qtmFetch(`/testcases/${id}/versions/${versionNo}/teststeps`, {
+      method: "DELETE",
+      body: JSON.stringify(body),
+    });
+    return okJSON({ message: `Steps deleted on test case ${id} v${versionNo}` });
+  }
+);
+
+tool(
+  "qtm4j_create_test_case_version",
+  {
+    title: "Create Test Case Version",
+    description:
+      "Branch a new version of a test case (optionally cloning from an existing version). Returns { id, key, versionNo }. Use this before making large edits so the previous version stays intact for prior cycles.",
+    inputSchema: {
+      id: ID.describe("Test case ID or key"),
+      copyFromVersion: z
+        .number()
+        .int()
+        .optional()
+        .describe("Version to copy from. Omit to start from blank."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  async ({ id, copyFromVersion }) =>
+    okJSON(
+      await qtmFetch(`/testcases/${id}/versions`, {
+        method: "POST",
+        body: JSON.stringify({ copyFromVersion }),
+      })
+    )
+);
+
+tool(
+  "qtm4j_move_test_cases",
+  {
+    title: "Move Test Cases to Folder",
+    description:
+      "Move test cases into a different folder (same project). Pass either testcaseIds or a filter. selectedFolderId is the source, targetFolderId is the destination.",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]),
+      selectedFolderId: z.number().int().describe("Source folder ID (-1 for All Test Cases)"),
+      targetFolderId: z.number().int().describe("Destination folder ID"),
+      testcaseIds: z.array(z.string()).optional().describe("Test case UIDs from search_test_cases"),
+      filter: z.record(z.string(), z.any()).optional().describe("Same filter shape as search_test_cases"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async (body) => {
+    await qtmFetch("/testcases/move", { method: "PUT", body: JSON.stringify(body) });
+    return okJSON({ message: `Moved test cases to folder ${body.targetFolderId}` });
+  }
+);
+
+tool(
+  "qtm4j_bulk_update_test_cases",
+  {
+    title: "Bulk Update Test Cases",
+    description:
+      "Apply a set of field changes to many test cases at once. `fields` is the same shape as update_test_case (priority, status, assignee, labels {mode:'append'|'replace', values:[]}, components, fixVersions, customFields, isAutomated, summary, description, precondition, etc.). Provide testCaseIds or a filter.",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]),
+      fields: z.record(z.string(), z.any()).describe("Fields to apply to every selected test case"),
+      testCaseIds: z.array(z.string()).optional(),
+      filter: z.record(z.string(), z.any()).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  async (body) => okJSON(await qtmFetch("/testcases/bulk", { method: "PUT", body: JSON.stringify(body) }))
+);
+
+tool(
+  "qtm4j_link_test_cases_to_requirement",
+  {
+    title: "Link Test Cases to Requirement",
+    description:
+      "Associate test cases with a Jira requirement (story/issue) so traceability reports pick them up. testcases is an array of { id, versionNo }.",
+    inputSchema: {
+      requirementId: z.number().int().describe("Jira issue numeric ID"),
+      testcases: z.array(z.object({ id: z.string(), versionNo: z.number().int() })),
+      sort: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ requirementId, ...body }) =>
+    okJSON(
+      await qtmFetch(`/requirements/${requirementId}/testcases/link`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+    )
+);
+
+tool(
+  "qtm4j_unlink_test_cases_from_requirement",
+  {
+    title: "Unlink Test Cases from Requirement",
+    description: "Remove the link between a Jira requirement and one or more test case versions.",
+    inputSchema: {
+      requirementId: z.number().int(),
+      testcases: z.array(z.object({ id: z.string(), versionNo: z.number().int() })),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ requirementId, ...body }) => {
+    await qtmFetch(`/requirements/${requirementId}/testcases/unlink`, {
+      method: "DELETE",
+      body: JSON.stringify(body),
+    });
+    return okJSON({ message: `Unlinked from requirement ${requirementId}` });
+  }
+);
+
+tool(
+  "qtm4j_search_folders",
+  {
+    title: "Search Folders by Name",
+    description:
+      "Find folders in a module (testcase / testcycle / testplan) by name substring. Pass mode='STRICT' for exact match, omit for partial match.",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]),
+      module: FOLDER_MODULE,
+      folderName: z.string(),
+      mode: z.enum(["STRICT"]).optional(),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId, module, folderName, mode }) =>
+    okJSON(
+      await qtmFetch(
+        `/projects/${projectId}/${module}-folders/search${qs({ folderName, mode })}`
+      )
+    )
+);
+
+tool(
+  "qtm4j_edit_folder",
+  {
+    title: "Edit Folder",
+    description: "Rename a folder or update its description in any module.",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]),
+      module: FOLDER_MODULE,
+      folderId: z.number().int(),
+      folderName: z.string().optional(),
+      description: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId, module, folderId, folderName, description }) => {
+    await qtmFetch(`/projects/${projectId}/${module}-folders/${folderId}`, {
+      method: "PUT",
+      body: JSON.stringify({ folderName, description }),
+    });
+    return okJSON({ message: `Folder ${folderId} updated` });
+  }
+);
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  METADATA (read-only lookups for IDs)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const ProjectId = z
+  .union([z.string(), z.number()])
+  .describe("Jira project numeric ID (e.g. 10011)");
+
+const STATUS_MODULE = z
+  .enum(["testcase", "testcycle", "testplan"])
+  .describe("Module whose statuses to fetch");
+
+const CF_MODULE = z
+  .enum(["testcase", "testcycle", "testplan", "testcase-execution"])
+  .describe("Module whose custom fields to fetch");
+
+tool(
+  "qtm4j_get_projects",
+  {
+    title: "Get QMetry-Enabled Projects",
+    description:
+      "List Jira projects with QMetry enabled. Returns id, key, name, and avatarUrl. Use returned numeric id as projectId for other tools.",
+    inputSchema: {
+      search: z.string().optional().describe("Filter by project key/name substring"),
+      qmetryEnabled: z.boolean().optional().describe("Default true"),
+      favorite: z.boolean().optional(),
+      startAt: z.number().int().optional(),
+      maxResults: z.number().int().optional(),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ startAt, maxResults, ...filter }) =>
+    okJSON(
+      await qtmFetch(`/projects${qs({ startAt, maxResults })}`, {
+        method: "POST",
+        body: JSON.stringify(filter),
+      })
+    )
+);
+
+tool(
+  "qtm4j_get_priorities",
+  {
+    title: "Get Priorities",
+    description: "List priorities (id, name, iconUrl, isDefault, isArchive) for a project.",
+    inputSchema: {
+      projectId: ProjectId,
+      status: z.array(z.enum(["active", "archive"])).optional(),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId, status }) =>
+    okJSON(
+      await qtmFetch(
+        `/projects/${projectId}/priorities${qs({ status: status?.join(",") })}`
+      )
+    )
+);
+
+tool(
+  "qtm4j_get_priority_icons",
+  {
+    title: "Get Priority Icons",
+    description: "List built-in priority icons (id, iconUrl) usable when creating priorities.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async () => okJSON(await qtmFetch("/priority/icons"))
+);
+
+tool(
+  "qtm4j_get_statuses",
+  {
+    title: "Get Statuses",
+    description:
+      "List statuses for a module (testcase / testcycle / testplan). Returns id, name, color, isDefault, isArchive.",
+    inputSchema: {
+      projectId: ProjectId,
+      module: STATUS_MODULE,
+      status: z.array(z.enum(["active", "archive"])).optional(),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId, module, status }) =>
+    okJSON(
+      await qtmFetch(
+        `/projects/${projectId}/${module}-statuses${qs({ status: status?.join(",") })}`
+      )
+    )
+);
+
+tool(
+  "qtm4j_get_environments",
+  {
+    title: "Get Environments",
+    description: "List execution environments (id, name, description, isDefault) for a project.",
+    inputSchema: { projectId: ProjectId },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId }) => okJSON(await qtmFetch(`/projects/${projectId}/environments`))
+);
+
+tool(
+  "qtm4j_get_builds",
+  {
+    title: "Get Builds",
+    description: "List builds (id, name, description) for a project.",
+    inputSchema: { projectId: ProjectId },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId }) => okJSON(await qtmFetch(`/projects/${projectId}/builds`))
+);
+
+tool(
+  "qtm4j_get_labels",
+  {
+    title: "Get Labels",
+    description:
+      "List labels for a project. Use paginated=true with search/sort for large projects (returns startAt/maxResults/total/data).",
+    inputSchema: {
+      projectId: ProjectId,
+      paginated: z.boolean().optional().describe("Use the paginated /label endpoint"),
+      search: z.string().optional(),
+      sort: z.enum(["asc", "desc"]).optional(),
+      startAt: z.number().int().optional(),
+      maxResults: z.number().int().optional(),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId, paginated, search, sort, startAt, maxResults }) => {
+    const path = paginated
+      ? `/projects/${projectId}/label${qs({ search, sort, startAt, maxResults })}`
+      : `/projects/${projectId}/labels`;
+    return okJSON(await qtmFetch(path));
+  }
+);
+
+tool(
+  "qtm4j_get_components",
+  {
+    title: "Get Components",
+    description: "List components (id, name, description) for a project.",
+    inputSchema: { projectId: ProjectId },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId }) => okJSON(await qtmFetch(`/projects/${projectId}/components`))
+);
+
+tool(
+  "qtm4j_get_execution_results",
+  {
+    title: "Get Execution Results",
+    description: "List execution result definitions (id, name, color, isDefault) for a project.",
+    inputSchema: { projectId: ProjectId },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId }) => okJSON(await qtmFetch(`/projects/${projectId}/execution-results`))
+);
+
+tool(
+  "qtm4j_get_custom_fields",
+  {
+    title: "Get Custom Fields",
+    description:
+      "List custom field definitions for a module. fieldType integers: 1=text, 3=radio, 4=checkbox, 5=single-dropdown, 6=multi-dropdown, 7=date, 8=datetime, 9=number, 10=user, 11=label, 12=cascade.",
+    inputSchema: {
+      projectId: ProjectId,
+      module: CF_MODULE,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId, module }) =>
+    okJSON(await qtmFetch(`/projects/${projectId}/${module}-custom-fields`))
+);
+
+tool(
+  "qtm4j_get_parameters",
+  {
+    title: "Get Parameters",
+    description: "List data-grid parameters (id, name, description) for a project. Paginated.",
+    inputSchema: {
+      projectId: ProjectId,
+      search: z.string().optional(),
+      startAt: z.number().int().optional(),
+      maxResults: z.number().int().optional(),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId, search, startAt, maxResults }) =>
+    okJSON(
+      await qtmFetch(
+        `/projects/${projectId}/parameters${qs({ search, startAt, maxResults })}`
+      )
+    )
+);
+
+tool(
+  "qtm4j_get_user_permissions",
+  {
+    title: "Get Current User Permissions",
+    description:
+      "Return permission flags for the current user on a project (e.g. TEST_CASE_EDIT, TEST_CYCLE_EXECUTE). Useful for pre-flight checks before mutations.",
+    inputSchema: { projectId: ProjectId },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ projectId }) => okJSON(await qtmFetch(`/projects/${projectId}/user-permissions`))
+);
+
 // ── Start server ──────────────────────────────────────────────────────────────
+
+if (process.argv.includes("--check")) {
+  try {
+    const res = await fetch(`${BASE_URL}/testcases/search?maxResults=1`, {
+      method: "POST",
+      headers: {
+        apiKey: API_KEY,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({ filter: {} }),
+    });
+    if (res.status === 401 || res.status === 403) {
+      process.stderr.write(
+        `FAIL: API key rejected by ${BASE_URL} (HTTP ${res.status}). Check QTM4J_API_KEY.\n`
+      );
+      process.exit(1);
+    }
+    process.stderr.write(
+      `OK: reached ${BASE_URL} (HTTP ${res.status}) — region ${REGION}, key authenticated.\n`
+    );
+    process.exit(0);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(
+      `FAIL: could not reach ${BASE_URL} — ${msg}. Check network and QTM4J_REGION.\n`
+    );
+    process.exit(1);
+  }
+}
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
