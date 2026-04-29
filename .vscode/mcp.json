@@ -5,7 +5,6 @@
       "command": "node",
       "args": ["${workspaceFolder}/dist/index.js"],
       "env": {
-        "QTM4J_API_KEY": "${env:QTM4J_API_KEY}",
         "QTM4J_REGION": "US"
       }
     }

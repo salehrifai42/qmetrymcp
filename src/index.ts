@@ -15,12 +15,29 @@ const BASE_URLS: Record<string, string> = {
 };
 
 const BASE_URL = BASE_URLS[REGION] ?? BASE_URLS["US"];
+const CHARACTER_LIMIT = 25000;
 
 if (!API_KEY) {
-  process.stderr.write("Warning: QTM4J_API_KEY environment variable is not set\n");
+  process.stderr.write(
+    "ERROR: QTM4J_API_KEY environment variable is required.\n" +
+      "Set it in your MCP client config or in a .env file before starting the server.\n"
+  );
+  process.exit(1);
 }
 
+const FOLDER_SEGMENT: Record<"TESTCASE" | "TESTCYCLE" | "TESTPLAN", "testcase-folders" | "testcycle-folders" | "testplan-folders"> = {
+  TESTCASE: "testcase-folders",
+  TESTCYCLE: "testcycle-folders",
+  TESTPLAN: "testplan-folders",
+};
+
 // ── HTTP helpers ──────────────────────────────────────────────────────────────
+
+class QtmApiError extends Error {
+  constructor(public status: number, public statusText: string, public body: unknown) {
+    super(`HTTP ${status} ${statusText}`);
+  }
+}
 
 async function qtmFetch(
   path: string,
@@ -57,19 +74,68 @@ async function qtmFetch(
   }
 
   if (!response.ok) {
-    throw new Error(
-      `HTTP ${response.status} ${response.statusText}: ${JSON.stringify(body)}`
-    );
+    throw new QtmApiError(response.status, response.statusText, body);
   }
 
   return body;
 }
 
-/** Wrap a successful API response as MCP tool content. */
-function ok(data: unknown) {
-  return {
-    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
-  };
+/** Translate any thrown error into an actionable MCP tool error. */
+function toolError(error: unknown): { content: { type: "text"; text: string }[]; isError: true } {
+  let text: string;
+  if (error instanceof QtmApiError) {
+    const bodyStr = typeof error.body === "string" ? error.body : JSON.stringify(error.body);
+    switch (error.status) {
+      case 400:
+        text = `Bad request (400): ${bodyStr}. Check that required fields are present and IDs are numeric where expected.`;
+        break;
+      case 401:
+        text = `Unauthorized (401): QTM4J_API_KEY is invalid or expired. Generate a new key in QMetry → API Keys.`;
+        break;
+      case 403:
+        text = `Forbidden (403): API key lacks permission for this resource. Check project access in QMetry.`;
+        break;
+      case 404:
+        text = `Not found (404): The resource doesn't exist. Verify the ID/key, and remember internal IDs and keys (e.g. FS-TR-747) are different — search endpoints often need the internal id from a prior search response.`;
+        break;
+      case 429:
+        text = `Rate limited (429) after retries: ${bodyStr}. Wait a minute and retry.`;
+        break;
+      default:
+        text = `QMetry API error ${error.status} ${error.statusText}: ${bodyStr}`;
+    }
+  } else if (error instanceof Error) {
+    text = `Error: ${error.message}`;
+  } else {
+    text = `Unexpected error: ${String(error)}`;
+  }
+  return { content: [{ type: "text", text }], isError: true };
+}
+
+/** Wrap a successful API response as MCP tool content (JSON), with truncation. */
+function okJSON(data: unknown) {
+  let text = JSON.stringify(data, null, 2);
+  if (text.length > CHARACTER_LIMIT) {
+    const original = text.length;
+    text =
+      text.slice(0, CHARACTER_LIMIT) +
+      `\n\n[... response truncated from ${original} to ${CHARACTER_LIMIT} chars. ` +
+      `Use 'folderId' to scope, 'maxResults' / 'startAt' to paginate, or 'fields' to limit columns. ` +
+      `For folder trees, pass a specific folderId to fetch only that subtree.]`;
+  }
+  return { content: [{ type: "text" as const, text }] };
+}
+
+/** Wrap markdown text as MCP tool content, with truncation. */
+function okMarkdown(md: string) {
+  let text = md;
+  if (text.length > CHARACTER_LIMIT) {
+    const original = text.length;
+    text =
+      text.slice(0, CHARACTER_LIMIT) +
+      `\n\n_[Response truncated from ${original} to ${CHARACTER_LIMIT} chars. Use filters/pagination to narrow results.]_`;
+  }
+  return { content: [{ type: "text" as const, text }] };
 }
 
 /** Build a query string from a plain object, omitting undefined values. */
@@ -93,7 +159,6 @@ function collectFolderIds(nodes: any[], targetId?: number): number[] {
     return ids;
   }
   if (targetId === undefined) return collectAll(nodes);
-  // Find the target node anywhere in the tree, then collect it + all descendants
   for (const node of nodes) {
     if (node.id === targetId) {
       return [node.id, ...collectAll(node.children ?? [])];
@@ -104,42 +169,105 @@ function collectFolderIds(nodes: any[], targetId?: number): number[] {
   return [];
 }
 
-/** Fetch all folder IDs under a given folderId (or all folders if omitted). */
-async function getFolderIds(projectId: number | string, folderType: "testcase-folders" | "testcycle-folders" | "testplan-folders", folderId?: number): Promise<number[]> {
-  const data = await qtmFetch(`/projects/${projectId}/${folderType}`) as any;
+async function getFolderIds(
+  projectId: number | string,
+  folderType: "TESTCASE" | "TESTCYCLE" | "TESTPLAN",
+  folderId?: number
+): Promise<number[]> {
+  const data = (await qtmFetch(`/projects/${projectId}/${FOLDER_SEGMENT[folderType]}`)) as any;
   const nodes = data?.data ?? data ?? [];
   return folderId !== undefined ? collectFolderIds(nodes, folderId) : collectFolderIds(nodes);
 }
 
-/** Search a single folderId, returning only the total count. */
-async function countInFolder(endpoint: string, projectId: number | string, folderId: number, filters: Record<string, unknown>): Promise<number> {
-  const res = await qtmFetch(`${endpoint}?maxResults=1`, {
+async function countInFolder(
+  endpoint: string,
+  projectId: number | string,
+  folderId: number,
+  filters: Record<string, unknown>
+): Promise<number> {
+  const res = (await qtmFetch(`${endpoint}?maxResults=1`, {
     method: "POST",
     body: JSON.stringify({ filter: { projectId, folderId, ...filters } }),
-  }) as any;
+  })) as any;
   return res?.total ?? 0;
 }
 
-/** Recursively count items across all subfolders in parallel batches of 20. */
-async function recursiveCount(endpoint: string, projectId: number | string, folderType: "testcase-folders" | "testcycle-folders" | "testplan-folders", folderId: number, filters: Record<string, unknown>): Promise<{ total: number; folderCount: number }> {
+async function recursiveCount(
+  endpoint: string,
+  projectId: number | string,
+  folderType: "TESTCASE" | "TESTCYCLE" | "TESTPLAN",
+  folderId: number,
+  filters: Record<string, unknown>
+): Promise<{ total: number; folderCount: number }> {
   const ids = await getFolderIds(projectId, folderType, folderId);
   const chunks: number[][] = [];
   for (let i = 0; i < ids.length; i += 20) chunks.push(ids.slice(i, i + 20));
   let total = 0;
   for (const chunk of chunks) {
-    const counts = await Promise.all(chunk.map(id => countInFolder(endpoint, projectId, id, filters)));
+    const counts = await Promise.all(chunk.map((id) => countInFolder(endpoint, projectId, id, filters)));
     total += counts.reduce((a, b) => a + b, 0);
   }
   return { total, folderCount: ids.length };
 }
 
+// ── Markdown formatters ──────────────────────────────────────────────────────
+
+function fmtSearchResults(label: string, data: any): string {
+  const items = data?.data ?? [];
+  const total = data?.total ?? items.length;
+  const lines = [`# ${label}`, "", `**Total**: ${total} · **Showing**: ${items.length}`, ""];
+  if (!items.length) {
+    lines.push("_No results._");
+    return lines.join("\n");
+  }
+  for (const item of items) {
+    const key = item.key ?? item.id;
+    const summary = item.summary ?? item.name ?? "(no summary)";
+    lines.push(`## ${summary} (${key})`);
+    if (item.id && item.id !== key) lines.push(`- **Internal ID**: ${item.id}`);
+    if (item.status?.name) lines.push(`- **Status**: ${item.status.name}`);
+    if (item.priority?.name) lines.push(`- **Priority**: ${item.priority.name}`);
+    if (item.assignee) lines.push(`- **Assignee**: ${item.assignee}`);
+    if (item.archived) lines.push(`- **Archived**: yes`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
+function fmtFolderTree(nodes: any[], depth = 0): string {
+  const lines: string[] = [];
+  for (const node of nodes) {
+    lines.push(`${"  ".repeat(depth)}- **${node.name}** (id: ${node.id})`);
+    if (node.children?.length) lines.push(fmtFolderTree(node.children, depth + 1));
+  }
+  return lines.join("\n");
+}
+
+function fmtExecutions(data: any): string {
+  const items = data?.data ?? [];
+  const total = data?.total ?? items.length;
+  const lines = [`# Test Cycle Executions`, "", `**Total**: ${total} · **Showing**: ${items.length}`, ""];
+  if (!items.length) return lines.concat(["_No executions._"]).join("\n");
+  for (const ex of items) {
+    lines.push(`## ${ex.summary ?? ex.key ?? ex.testCaseExecutionId}`);
+    if (ex.testCaseExecutionId) lines.push(`- **Execution ID**: ${ex.testCaseExecutionId}`);
+    if (ex.testCycleTestCaseMapId) lines.push(`- **Map ID** (for bulk update): ${ex.testCycleTestCaseMapId}`);
+    if (ex.executionStatus?.name) lines.push(`- **Result**: ${ex.executionStatus.name}`);
+    if (ex.priority?.name) lines.push(`- **Priority**: ${ex.priority.name}`);
+    lines.push("");
+  }
+  return lines.join("\n");
+}
+
 // ── Shared sub-schemas ────────────────────────────────────────────────────────
 
-const CustomField = z.object({
-  id: z.string().describe("Custom field ID, e.g. qcf_1"),
-  value: z.string().optional().describe("Field value"),
-  cascadeValue: z.string().optional().describe("Cascade dropdown value"),
-});
+const CustomField = z
+  .object({
+    id: z.string().describe("Custom field ID, e.g. qcf_1"),
+    value: z.string().optional().describe("Field value"),
+    cascadeValue: z.string().optional().describe("Cascade dropdown value"),
+  })
+  .strict();
 
 const Pagination = {
   startAt: z.number().int().min(0).optional().describe("Page offset (default 0)"),
@@ -156,31 +284,51 @@ const Pagination = {
 
 const SearchFilters = {
   folderId: z.number().int().optional().describe("Filter by folder ID"),
-  status: z.array(z.string()).optional().describe("Filter by status values"),
-  priority: z.array(z.string()).optional().describe("Filter by priority values"),
+  status: z.array(z.string()).optional().describe("Filter by status name strings (e.g. ['To Do'])"),
+  priority: z.array(z.string()).optional().describe("Filter by priority name strings (e.g. ['High'])"),
   assignee: z.array(z.string()).optional().describe("Filter by assignee Jira account IDs"),
   query: z.string().optional().describe("Free-text search query"),
 };
 
 const ID = z.union([z.string(), z.number()]);
+const ResponseFormat = z
+  .enum(["json", "markdown"])
+  .default("json")
+  .describe("Output format. 'markdown' is human-readable; 'json' (default) is machine-readable.");
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
-const server = new McpServer({ name: "qtm4j-mcp", version: "1.0.0" });
+const server = new McpServer({ name: "qtm4j-mcp-server", version: "0.1.0" });
 
-/** Thin wrapper around registerTool for concise, non-deprecated tool registration. */
+type ToolAnnotations = {
+  readOnlyHint?: boolean;
+  destructiveHint?: boolean;
+  idempotentHint?: boolean;
+  openWorldHint?: boolean;
+};
+
+type CallResult = { content: { type: "text"; text: string }[]; isError?: true };
+
 const tool = <Shape extends z.ZodRawShape>(
   name: string,
-  description: string,
-  inputSchema: Shape,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  callback: (args: z.infer<z.ZodObject<Shape>>) => Promise<any>
+  config: {
+    title: string;
+    description: string;
+    inputSchema: Shape;
+    annotations: ToolAnnotations;
+  },
+  callback: (args: z.infer<z.ZodObject<Shape>>) => Promise<CallResult>
 ) =>
   server.registerTool(
     name,
-    { description, inputSchema },
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    callback as any
+    config,
+    (async (args: z.infer<z.ZodObject<Shape>>) => {
+      try {
+        return await callback(args);
+      } catch (err) {
+        return toolError(err);
+      }
+    }) as any
   );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -188,126 +336,165 @@ const tool = <Shape extends z.ZodRawShape>(
 // ─────────────────────────────────────────────────────────────────────────────
 
 tool(
-  "create_test_case",
-  "Create a new test case in QMetry. Returns the created test case object including its internal id and key (e.g. FS-TC-123). Priority, status, labels, and components use integer IDs — see field_reference.json for valid values.",
+  "qtm4j_create_test_case",
   {
-    projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
-    summary: z.string().describe("Test case title/summary"),
-    precondition: z.string().optional().describe("Precondition / description text"),
-    priority: z.number().int().optional().describe("Priority integer ID (e.g. 600784 for High)"),
-    status: z.number().int().optional().describe("Status integer ID (e.g. 544256 for Done)"),
-    assignee: z.string().optional().describe("Assignee Jira account ID"),
-    labels: z.array(z.number().int()).optional().describe("Label IDs to attach"),
-    components: z.array(z.number().int()).optional().describe("Component IDs"),
-    fixVersions: z.array(z.number().int()).optional().describe("Fix version IDs"),
-    folderId: z.number().int().optional().describe("Target folder ID"),
-    customFields: z.array(CustomField).optional().describe("Custom field values"),
+    title: "Create Test Case",
+    description:
+      "Create a new test case in QMetry. Returns the created test case object including its internal id and key (e.g. FS-TC-123). Priority, status, labels, and components use integer IDs.",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
+      summary: z.string().describe("Test case title/summary"),
+      precondition: z.string().optional().describe("Precondition / description text"),
+      priority: z.number().int().optional().describe("Priority integer ID (e.g. 600784 for High)"),
+      status: z.number().int().optional().describe("Status integer ID (e.g. 544256 for Done)"),
+      assignee: z.string().optional().describe("Assignee Jira account ID"),
+      labels: z.array(z.number().int()).optional().describe("Label IDs to attach"),
+      components: z.array(z.number().int()).optional().describe("Component IDs"),
+      fixVersions: z.array(z.number().int()).optional().describe("Fix version IDs"),
+      folderId: z.number().int().optional().describe("Target folder ID"),
+      customFields: z.array(CustomField).optional().describe("Custom field values"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async (body) => {
-    return ok(await qtmFetch("/testcases", { method: "POST", body: JSON.stringify(body) }));
-  }
+  async (body) => okJSON(await qtmFetch("/testcases", { method: "POST", body: JSON.stringify(body) }))
 );
 
 tool(
-  "get_test_case",
-  "Get a test case by its internal ID or key (e.g. FS-TC-31950). Returns an array of versions, each with versionNo, isLatestVersion, aiGenerated flag, and any test steps.",
-  { id: ID.describe("Test case ID or key (e.g. QTP-TC-1)") },
-  async ({ id }) => ok(await qtmFetch(`/testcases/${id}`))
+  "qtm4j_get_test_case",
+  {
+    title: "Get Test Case",
+    description:
+      "Get a test case by its internal ID or key (e.g. FS-TC-31950). Returns an array of versions with versionNo, isLatestVersion, aiGenerated flag, and any test steps.",
+    inputSchema: {
+      id: ID.describe("Test case ID or key (e.g. QTP-TC-1)"),
+      response_format: ResponseFormat,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ id }) => okJSON(await qtmFetch(`/testcases/${id}`))
 );
 
 tool(
-  "search_test_cases",
-  "Search test cases in a project with optional filters. Returns total count and paginated data with id, key, version info, archived flag. Use status/priority name strings (e.g. 'To Do', 'High') not IDs. projectId must be numeric (10011). Set recursive=true with a folderId to count across all subfolders (returns total only, no data).",
+  "qtm4j_search_test_cases",
   {
-    projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
-    labels: z.array(z.string()).optional().describe("Filter by labels"),
-    components: z.array(z.string()).optional().describe("Filter by components"),
-    recursive: z.boolean().optional().describe("If true and folderId is set, counts test cases across all subfolders recursively. Returns { total, folderCount } only."),
-    ...SearchFilters,
-    ...Pagination,
+    title: "Search Test Cases",
+    description:
+      "Search test cases in a project with optional filters. Returns total count and paginated data. Use status/priority name strings (e.g. 'To Do', 'High'). projectId must be numeric (e.g. 10011). Set recursive=true with folderId to count across all subfolders (returns total only, no data).",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
+      labels: z.array(z.string()).optional().describe("Filter by labels"),
+      components: z.array(z.string()).optional().describe("Filter by components"),
+      recursive: z
+        .boolean()
+        .optional()
+        .describe("If true and folderId is set, counts test cases across all subfolders. Returns { total, folderCount } only."),
+      response_format: ResponseFormat,
+      ...SearchFilters,
+      ...Pagination,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ startAt, maxResults, sort, fields, projectId, recursive, folderId, ...filters }) => {
+  async ({ startAt, maxResults, sort, fields, projectId, recursive, folderId, response_format, ...filters }) => {
     if (recursive && folderId !== undefined) {
-      const result = await recursiveCount("/testcases/search", projectId, "testcase-folders", folderId, filters);
-      return ok(result);
+      return okJSON(await recursiveCount("/testcases/search", projectId, "TESTCASE", folderId, filters));
     }
-    return ok(
-      await qtmFetch(`/testcases/search${qs({ startAt, maxResults, sort, fields })}`, {
-        method: "POST",
-        body: JSON.stringify({ filter: { projectId, folderId, ...filters } }),
-      })
-    );
+    const data = await qtmFetch(`/testcases/search${qs({ startAt, maxResults, sort, fields })}`, {
+      method: "POST",
+      body: JSON.stringify({ filter: { projectId, folderId, ...filters } }),
+    });
+    return response_format === "markdown" ? okMarkdown(fmtSearchResults("Test Cases", data)) : okJSON(data);
   }
 );
 
 tool(
-  "update_test_case",
-  "Update fields on a specific version of a test case. Requires both the test case id and versionNo (usually 1 for latest). Priority and status take integer IDs. Returns 204 on success.",
+  "qtm4j_update_test_case",
   {
-    id: ID.describe("Test case ID"),
-    versionNo: z.number().int().describe("Version number to update"),
-    summary: z.string().optional(),
-    precondition: z.string().optional(),
-    priority: z.number().int().optional().describe("Priority integer ID"),
-    status: z.number().int().optional().describe("Status integer ID"),
-    assignee: z.string().optional().describe("Assignee Jira account ID"),
-    labels: z.array(z.number().int()).optional(),
-    components: z.array(z.number().int()).optional(),
-    fixVersions: z.array(z.number().int()).optional(),
-    customFields: z.array(CustomField).optional(),
+    title: "Update Test Case",
+    description:
+      "Update fields on a specific version of a test case. Requires the test case id and versionNo (usually 1 for latest). Priority and status take integer IDs.",
+    inputSchema: {
+      id: ID.describe("Test case ID"),
+      versionNo: z.number().int().describe("Version number to update"),
+      summary: z.string().optional(),
+      precondition: z.string().optional(),
+      priority: z.number().int().optional().describe("Priority integer ID"),
+      status: z.number().int().optional().describe("Status integer ID"),
+      assignee: z.string().optional().describe("Assignee Jira account ID"),
+      labels: z.array(z.number().int()).optional(),
+      components: z.array(z.number().int()).optional(),
+      fixVersions: z.array(z.number().int()).optional(),
+      customFields: z.array(CustomField).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ id, versionNo, ...rest }) => {
     await qtmFetch(`/testcases/${id}/versions/${versionNo}`, {
       method: "PUT",
       body: JSON.stringify(rest),
     });
-    return ok({ message: `Test case ${id} version ${versionNo} updated` });
+    return okJSON({ message: `Test case ${id} version ${versionNo} updated` });
   }
 );
 
 tool(
-  "delete_test_case",
-  "Permanently delete a specific version of a test case. If it is the only version, the test case is removed entirely. Returns 204 on success.",
+  "qtm4j_delete_test_case",
   {
-    id: ID.describe("Test case ID"),
-    versionNo: z.number().int().describe("Version number to delete"),
+    title: "Delete Test Case Version",
+    description:
+      "Permanently delete a specific version of a test case. If it is the only version, the test case is removed entirely. Irreversible.",
+    inputSchema: {
+      id: ID.describe("Test case ID"),
+      versionNo: z.number().int().describe("Version number to delete"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   },
   async ({ id, versionNo }) => {
     await qtmFetch(`/testcases/${id}/versions/${versionNo}`, { method: "DELETE" });
-    return ok({ message: `Test case ${id} version ${versionNo} deleted` });
+    return okJSON({ message: `Test case ${id} version ${versionNo} deleted` });
   }
 );
 
 tool(
-  "clone_test_cases",
-  "Bulk clone one or more test cases into a target project and optional folder. Returns a background task object with a taskId and progressUrl to poll for completion.",
+  "qtm4j_clone_test_cases",
   {
-    testcaseIds: z.array(z.number().int()).describe("Test case IDs to clone"),
-    projectId: z.string().describe("Target project ID or key"),
-    folderId: z.number().int().optional().describe("Target folder ID"),
+    title: "Clone Test Cases",
+    description:
+      "Bulk clone one or more test cases into a target project and optional folder. Returns a background task object with taskId and progressUrl to poll.",
+    inputSchema: {
+      testcaseIds: z.array(z.number().int()).describe("Test case IDs to clone"),
+      projectId: z.string().describe("Target project ID or key"),
+      folderId: z.number().int().optional().describe("Target folder ID"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async (input) =>
-    ok(await qtmFetch("/testcases/clone", { method: "POST", body: JSON.stringify(input) }))
+  async (input) => okJSON(await qtmFetch("/testcases/clone", { method: "POST", body: JSON.stringify(input) }))
 );
 
 tool(
-  "create_test_steps",
-  "Add one or more test steps to a specific version of a test case. Each step has stepDetails (required), expectedResult, and testData. Returns the created step objects with their IDs.",
+  "qtm4j_create_test_steps",
   {
-    id: ID.describe("Test case ID"),
-    versionNo: z.number().int().describe("Test case version number"),
-    steps: z
-      .array(
-        z.object({
-          stepDetails: z.string().describe("Step action/description"),
-          expectedResult: z.string().optional(),
-          testData: z.string().optional(),
-        })
-      )
-      .describe("Steps to create"),
+    title: "Create Test Steps",
+    description:
+      "Add one or more test steps to a specific version of a test case. Each step has stepDetails (required), expectedResult, and testData. Returns the created step objects with their IDs.",
+    inputSchema: {
+      id: ID.describe("Test case ID"),
+      versionNo: z.number().int().describe("Test case version number"),
+      steps: z
+        .array(
+          z
+            .object({
+              stepDetails: z.string().describe("Step action/description"),
+              expectedResult: z.string().optional(),
+              testData: z.string().optional(),
+            })
+            .strict()
+        )
+        .describe("Steps to create"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   async ({ id, versionNo, steps }) =>
-    ok(
+    okJSON(
       await qtmFetch(`/testcases/${id}/versions/${versionNo}/teststeps`, {
         method: "POST",
         body: JSON.stringify(steps),
@@ -316,24 +503,31 @@ tool(
 );
 
 tool(
-  "update_test_steps",
-  "Update existing test steps on a test case version. Each step must include its step id (from create_test_steps or get_test_case response). Returns the updated step objects.",
+  "qtm4j_update_test_steps",
   {
-    id: ID.describe("Test case ID"),
-    versionNo: z.number().int().describe("Test case version number"),
-    steps: z
-      .array(
-        z.object({
-          id: z.number().int().describe("Step ID to update"),
-          stepDetails: z.string().optional(),
-          expectedResult: z.string().optional(),
-          testData: z.string().optional(),
-        })
-      )
-      .describe("Steps to update"),
+    title: "Update Test Steps",
+    description:
+      "Update existing test steps on a test case version. Each step must include its step id (from qtm4j_create_test_steps or qtm4j_get_test_case).",
+    inputSchema: {
+      id: ID.describe("Test case ID"),
+      versionNo: z.number().int().describe("Test case version number"),
+      steps: z
+        .array(
+          z
+            .object({
+              id: z.number().int().describe("Step ID to update"),
+              stepDetails: z.string().optional(),
+              expectedResult: z.string().optional(),
+              testData: z.string().optional(),
+            })
+            .strict()
+        )
+        .describe("Steps to update"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ id, versionNo, steps }) =>
-    ok(
+    okJSON(
       await qtmFetch(`/testcases/${id}/versions/${versionNo}/teststeps`, {
         method: "PUT",
         body: JSON.stringify(steps),
@@ -346,75 +540,98 @@ tool(
 // ─────────────────────────────────────────────────────────────────────────────
 
 tool(
-  "create_test_cycle",
-  "Create a new test cycle in QMetry. Returns the created cycle with its internal id and key (e.g. FS-TR-123). Use list_folders with folderType=TESTCYCLE to find valid folderId values.",
+  "qtm4j_create_test_cycle",
   {
-    projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
-    summary: z.string().describe("Test cycle name/summary"),
-    description: z.string().optional(),
-    priority: z.string().optional(),
-    status: z.string().optional(),
-    assignee: z.string().optional().describe("Assignee Jira account ID"),
-    folderId: z.number().int().optional().describe("Target folder ID"),
-    plannedStartDate: z.string().optional().describe("ISO 8601 planned start date"),
-    plannedEndDate: z.string().optional().describe("ISO 8601 planned end date"),
-    customFields: z.array(CustomField).optional(),
+    title: "Create Test Cycle",
+    description:
+      "Create a new test cycle. Returns the created cycle with its internal id and key (e.g. FS-TR-123). Use qtm4j_list_folders with folderType=TESTCYCLE to find valid folderId values.",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
+      summary: z.string().describe("Test cycle name/summary"),
+      description: z.string().optional(),
+      priority: z.string().optional(),
+      status: z.string().optional(),
+      assignee: z.string().optional().describe("Assignee Jira account ID"),
+      folderId: z.number().int().optional().describe("Target folder ID"),
+      plannedStartDate: z.string().optional().describe("ISO 8601 planned start date"),
+      plannedEndDate: z.string().optional().describe("ISO 8601 planned end date"),
+      customFields: z.array(CustomField).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async (input) =>
-    ok(await qtmFetch("/testcycles", { method: "POST", body: JSON.stringify(input) }))
+  async (input) => okJSON(await qtmFetch("/testcycles", { method: "POST", body: JSON.stringify(input) }))
 );
 
 tool(
-  "get_test_cycle",
-  "Get a test cycle by its key (e.g. FS-TR-747) or internal id. Returns id, key, status, priority, projectId, archived flag. The internal 'id' returned here is required by get_test_cycle_executions and update_test_execution.",
-  { id: ID.describe("Test cycle ID or key") },
-  async ({ id }) => ok(await qtmFetch(`/testcycles/${id}`))
+  "qtm4j_get_test_cycle",
+  {
+    title: "Get Test Cycle",
+    description:
+      "Get a test cycle by its key (e.g. FS-TR-747) or internal id. The internal 'id' returned here is required by qtm4j_get_test_cycle_executions and qtm4j_update_test_execution.",
+    inputSchema: { id: ID.describe("Test cycle ID or key") },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ id }) => okJSON(await qtmFetch(`/testcycles/${id}`))
 );
 
 tool(
-  "search_test_cycles",
-  "Search test cycles in a project. Returns total count and paginated list with id, key, status, priority, archived. The 'id' field in results is the internal ID needed for execution tools.",
+  "qtm4j_search_test_cycles",
   {
-    projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
-    ...SearchFilters,
-    ...Pagination,
+    title: "Search Test Cycles",
+    description:
+      "Search test cycles in a project. Returns total count and paginated list. The 'id' field in results is the internal ID needed for execution tools.",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
+      response_format: ResponseFormat,
+      ...SearchFilters,
+      ...Pagination,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ startAt, maxResults, sort, fields, projectId, ...filters }) =>
-    ok(
-      await qtmFetch(`/testcycles/search${qs({ startAt, maxResults, sort, fields })}`, {
-        method: "POST",
-        body: JSON.stringify({ filter: { projectId, ...filters } }),
-      })
-    )
-);
-
-tool(
-  "update_test_cycle",
-  "Update a test cycle's metadata (summary, description, priority, status, dates, custom fields). Pass the internal id or key. Returns 204 on success.",
-  {
-    id: ID.describe("Test cycle ID"),
-    summary: z.string().optional(),
-    description: z.string().optional(),
-    priority: z.string().optional(),
-    status: z.string().optional(),
-    assignee: z.string().optional(),
-    plannedStartDate: z.string().optional().describe("ISO 8601 date"),
-    plannedEndDate: z.string().optional().describe("ISO 8601 date"),
-    customFields: z.array(CustomField).optional(),
-  },
-  async ({ id, ...rest }) => {
-    await qtmFetch(`/testcycles/${id}`, { method: "PUT", body: JSON.stringify(rest) });
-    return ok({ message: `Test cycle ${id} updated` });
+  async ({ startAt, maxResults, sort, fields, projectId, response_format, ...filters }) => {
+    const data = await qtmFetch(`/testcycles/search${qs({ startAt, maxResults, sort, fields })}`, {
+      method: "POST",
+      body: JSON.stringify({ filter: { projectId, ...filters } }),
+    });
+    return response_format === "markdown" ? okMarkdown(fmtSearchResults("Test Cycles", data)) : okJSON(data);
   }
 );
 
 tool(
-  "delete_test_cycle",
-  "Permanently delete a test cycle and all its execution records. This is irreversible. Returns 204 on success.",
-  { id: ID.describe("Test cycle ID") },
+  "qtm4j_update_test_cycle",
+  {
+    title: "Update Test Cycle",
+    description: "Update a test cycle's metadata (summary, description, priority, status, dates, custom fields).",
+    inputSchema: {
+      id: ID.describe("Test cycle ID"),
+      summary: z.string().optional(),
+      description: z.string().optional(),
+      priority: z.string().optional(),
+      status: z.string().optional(),
+      assignee: z.string().optional(),
+      plannedStartDate: z.string().optional().describe("ISO 8601 date"),
+      plannedEndDate: z.string().optional().describe("ISO 8601 date"),
+      customFields: z.array(CustomField).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ id, ...rest }) => {
+    await qtmFetch(`/testcycles/${id}`, { method: "PUT", body: JSON.stringify(rest) });
+    return okJSON({ message: `Test cycle ${id} updated` });
+  }
+);
+
+tool(
+  "qtm4j_delete_test_cycle",
+  {
+    title: "Delete Test Cycle",
+    description: "Permanently delete a test cycle and all its execution records. Irreversible.",
+    inputSchema: { id: ID.describe("Test cycle ID") },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  },
   async ({ id }) => {
     await qtmFetch(`/testcycles/${id}`, { method: "DELETE" });
-    return ok({ message: `Test cycle ${id} deleted` });
+    return okJSON({ message: `Test cycle ${id} deleted` });
   }
 );
 
@@ -423,79 +640,101 @@ tool(
 // ─────────────────────────────────────────────────────────────────────────────
 
 tool(
-  "get_test_cycle_executions",
-  "List all test case executions linked to a test cycle. Requires the internal cycle id (from get_test_cycle, not the key). Returns testCycleTestCaseMapId (needed for bulk_update), testCaseExecutionId (needed for update_test_execution), key, status, and priority per test case.",
+  "qtm4j_get_test_cycle_executions",
   {
-    id: ID.describe("Test cycle ID (internal ID from search_test_cycles)"),
-    ...Pagination,
+    title: "List Test Cycle Executions",
+    description:
+      "List all test case executions linked to a test cycle. Requires the internal cycle id (from qtm4j_get_test_cycle). Returns testCycleTestCaseMapId (for bulk_update), testCaseExecutionId (for update_test_execution), key, status, priority per test case.",
+    inputSchema: {
+      id: ID.describe("Test cycle ID (internal ID from qtm4j_search_test_cycles)"),
+      response_format: ResponseFormat,
+      ...Pagination,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ id, startAt, maxResults, sort, fields }) =>
-    ok(
-      await qtmFetch(`/testcycles/${id}/testcases/search${qs({ startAt, maxResults, sort, fields })}`, {
+  async ({ id, startAt, maxResults, sort, fields, response_format }) => {
+    const data = await qtmFetch(
+      `/testcycles/${id}/testcases/search${qs({ startAt, maxResults, sort, fields })}`,
+      {
         method: "POST",
         body: JSON.stringify({ filter: {} }),
-      })
-    )
-);
-
-tool(
-  "update_test_execution",
-  "Update a single test case execution result inside a test cycle. Use testCaseExecutionId from get_test_cycle_executions. executionResultId: 239443=Not Executed, 239444=Pass, 239441=Fail, 239442=Work In Progress, 239440=Blocked. Returns 204 on success.",
-  {
-    cycleId: ID.describe("Test cycle ID"),
-    testCaseExecutionId: ID.describe("Test case execution ID"),
-    executionResultId: z.number().int().optional().describe("Execution result/status ID"),
-    environmentId: z.number().int().optional().describe("Environment ID"),
-    buildId: z.number().int().optional().describe("Build ID"),
-    comment: z.string().optional().describe("Execution comment"),
-    actualTime: z.number().int().optional().describe("Actual time spent in milliseconds"),
-  },
-  async ({ cycleId, testCaseExecutionId, ...rest }) => {
-    await qtmFetch(
-      `/testcycles/${cycleId}/testcase-executions/${testCaseExecutionId}`,
-      { method: "PUT", body: JSON.stringify(rest) }
+      }
     );
-    return ok({ message: `Execution ${testCaseExecutionId} updated` });
+    return response_format === "markdown" ? okMarkdown(fmtExecutions(data)) : okJSON(data);
   }
 );
 
 tool(
-  "update_test_step_execution",
-  "Update a single step-level execution result within a test case execution. testStepExecutionId comes from get_test_cycle_executions step data. Returns 200 with updated step data.",
+  "qtm4j_update_test_execution",
   {
-    cycleId: ID.describe("Test cycle ID"),
-    testStepExecutionId: ID.describe("Test step execution ID"),
-    executionResultId: z.number().int().optional().describe("Execution result ID"),
-    actualResult: z.string().optional().describe("Actual result text"),
-    comment: z.string().optional(),
+    title: "Update Test Execution",
+    description:
+      "Update a single test case execution result inside a test cycle. Use testCaseExecutionId from qtm4j_get_test_cycle_executions. executionResultId: 239443=Not Executed, 239444=Pass, 239441=Fail, 239442=Work In Progress, 239440=Blocked.",
+    inputSchema: {
+      cycleId: ID.describe("Test cycle ID"),
+      testCaseExecutionId: ID.describe("Test case execution ID"),
+      executionResultId: z.number().int().optional().describe("Execution result/status ID"),
+      environmentId: z.number().int().optional().describe("Environment ID"),
+      buildId: z.number().int().optional().describe("Build ID"),
+      comment: z.string().optional().describe("Execution comment"),
+      actualTime: z.number().int().optional().describe("Actual time spent in milliseconds"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ cycleId, testCaseExecutionId, ...rest }) => {
+    await qtmFetch(`/testcycles/${cycleId}/testcase-executions/${testCaseExecutionId}`, {
+      method: "PUT",
+      body: JSON.stringify(rest),
+    });
+    return okJSON({ message: `Execution ${testCaseExecutionId} updated` });
+  }
+);
+
+tool(
+  "qtm4j_update_test_step_execution",
+  {
+    title: "Update Test Step Execution",
+    description:
+      "Update a single step-level execution result within a test case execution. testStepExecutionId comes from qtm4j_get_test_cycle_executions step data.",
+    inputSchema: {
+      cycleId: ID.describe("Test cycle ID"),
+      testStepExecutionId: ID.describe("Test step execution ID"),
+      executionResultId: z.number().int().optional().describe("Execution result ID"),
+      actualResult: z.string().optional().describe("Actual result text"),
+      comment: z.string().optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ cycleId, testStepExecutionId, ...rest }) => {
     const data = await qtmFetch(
       `/testcycles/${cycleId}/teststep-executions/${testStepExecutionId}`,
       { method: "PUT", body: JSON.stringify(rest) }
     );
-    return ok(data ?? { message: `Step execution ${testStepExecutionId} updated` });
+    return okJSON(data ?? { message: `Step execution ${testStepExecutionId} updated` });
   }
 );
 
 tool(
-  "bulk_update_test_executions",
-  "Apply the same execution result, environment, or build to multiple test case executions at once. Use testCycleTestCaseMapIds from get_test_cycle_executions (the 'testCycleTestCaseMapId' field). Returns 204 on success.",
+  "qtm4j_bulk_update_test_executions",
   {
-    cycleId: ID.describe("Test cycle ID"),
-    testCycleTestCaseMapIds: z
-      .array(z.number().int())
-      .describe("Test-case-execution map IDs to update"),
-    executionResultId: z.number().int().optional().describe("Execution result ID to apply to all"),
-    environmentId: z.number().int().optional().describe("Environment ID to apply to all"),
-    buildId: z.number().int().optional().describe("Build ID to apply to all"),
+    title: "Bulk Update Test Executions",
+    description:
+      "Apply the same execution result, environment, or build to multiple test case executions at once. Use testCycleTestCaseMapIds from qtm4j_get_test_cycle_executions (the 'testCycleTestCaseMapId' field).",
+    inputSchema: {
+      cycleId: ID.describe("Test cycle ID"),
+      testCycleTestCaseMapIds: z.array(z.number().int()).describe("Test-case-execution map IDs to update"),
+      executionResultId: z.number().int().optional().describe("Execution result ID to apply to all"),
+      environmentId: z.number().int().optional().describe("Environment ID to apply to all"),
+      buildId: z.number().int().optional().describe("Build ID to apply to all"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ cycleId, ...rest }) => {
     await qtmFetch(`/testcycles/${cycleId}/testcases/bulk`, {
       method: "PUT",
       body: JSON.stringify(rest),
     });
-    return ok({ message: "Bulk execution update applied" });
+    return okJSON({ message: "Bulk execution update applied" });
   }
 );
 
@@ -504,115 +743,151 @@ tool(
 // ─────────────────────────────────────────────────────────────────────────────
 
 tool(
-  "create_test_plan",
-  "Create a new test plan in QMetry. Returns the created plan with its internal id and key (e.g. FS-TP-44). Use list_folders with folderType=TESTPLAN to find valid folderId values.",
+  "qtm4j_create_test_plan",
   {
-    projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
-    summary: z.string().describe("Test plan name/summary"),
-    description: z.string().optional(),
-    priority: z.string().optional(),
-    status: z.string().optional(),
-    assignee: z.string().optional().describe("Assignee Jira account ID"),
-    folderId: z.number().int().optional().describe("Target folder ID"),
-    customFields: z.array(CustomField).optional(),
+    title: "Create Test Plan",
+    description:
+      "Create a new test plan. Returns the created plan with internal id and key (e.g. FS-TP-44). Use qtm4j_list_folders with folderType=TESTPLAN to find valid folderId values.",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
+      summary: z.string().describe("Test plan name/summary"),
+      description: z.string().optional(),
+      priority: z.string().optional(),
+      status: z.string().optional(),
+      assignee: z.string().optional().describe("Assignee Jira account ID"),
+      folderId: z.number().int().optional().describe("Target folder ID"),
+      customFields: z.array(CustomField).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async (input) =>
-    ok(await qtmFetch("/testplans", { method: "POST", body: JSON.stringify(input) }))
+  async (input) => okJSON(await qtmFetch("/testplans", { method: "POST", body: JSON.stringify(input) }))
 );
 
 tool(
-  "get_test_plan",
-  "Get a test plan by its key (e.g. FS-TP-43) or internal id. Returns id, key, projectId, archived flag. Use the internal 'id' when calling link/unlink/get_linked_test_cycles.",
-  { id: ID.describe("Test plan ID or key") },
-  async ({ id }) => ok(await qtmFetch(`/testplans/${id}`))
-);
-
-tool(
-  "search_test_plans",
-  "Search test plans in a project. Returns total count and paginated list with id, key, projectId, archived. The 'id' field is the internal ID needed for linking cycles.",
+  "qtm4j_get_test_plan",
   {
-    projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
-    ...SearchFilters,
-    ...Pagination,
+    title: "Get Test Plan",
+    description:
+      "Get a test plan by its key (e.g. FS-TP-43) or internal id. Use the internal 'id' for link/unlink/get_linked_test_cycles operations.",
+    inputSchema: { id: ID.describe("Test plan ID or key") },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ startAt, maxResults, sort, fields, projectId, ...filters }) =>
-    ok(
-      await qtmFetch(`/testplans/search${qs({ startAt, maxResults, sort, fields })}`, {
-        method: "POST",
-        body: JSON.stringify({ filter: { projectId, ...filters } }),
-      })
-    )
+  async ({ id }) => okJSON(await qtmFetch(`/testplans/${id}`))
 );
 
 tool(
-  "update_test_plan",
-  "Update a test plan's priority or custom fields. Returns 204 on success.",
+  "qtm4j_search_test_plans",
   {
-    id: ID.describe("Test plan ID"),
-    priority: z.string().optional(),
-    customFields: z.array(CustomField).optional(),
+    title: "Search Test Plans",
+    description: "Search test plans in a project. The 'id' field in results is the internal ID needed for linking cycles.",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
+      response_format: ResponseFormat,
+      ...SearchFilters,
+      ...Pagination,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ startAt, maxResults, sort, fields, projectId, response_format, ...filters }) => {
+    const data = await qtmFetch(`/testplans/search${qs({ startAt, maxResults, sort, fields })}`, {
+      method: "POST",
+      body: JSON.stringify({ filter: { projectId, ...filters } }),
+    });
+    return response_format === "markdown" ? okMarkdown(fmtSearchResults("Test Plans", data)) : okJSON(data);
+  }
+);
+
+tool(
+  "qtm4j_update_test_plan",
+  {
+    title: "Update Test Plan",
+    description: "Update a test plan's priority or custom fields.",
+    inputSchema: {
+      id: ID.describe("Test plan ID"),
+      priority: z.string().optional(),
+      customFields: z.array(CustomField).optional(),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ id, ...rest }) => {
     await qtmFetch(`/testplans/${id}`, { method: "PUT", body: JSON.stringify(rest) });
-    return ok({ message: `Test plan ${id} updated` });
+    return okJSON({ message: `Test plan ${id} updated` });
   }
 );
 
 tool(
-  "delete_test_plan",
-  "Permanently delete a test plan. This does not delete the linked test cycles. Returns 204 on success.",
-  { id: ID.describe("Test plan ID") },
+  "qtm4j_delete_test_plan",
+  {
+    title: "Delete Test Plan",
+    description: "Permanently delete a test plan. Does not delete the linked test cycles.",
+    inputSchema: { id: ID.describe("Test plan ID") },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  },
   async ({ id }) => {
     await qtmFetch(`/testplans/${id}`, { method: "DELETE" });
-    return ok({ message: `Test plan ${id} deleted` });
+    return okJSON({ message: `Test plan ${id} deleted` });
   }
 );
 
 tool(
-  "link_test_cycles_to_plan",
-  "Link one or more existing test cycles to a test plan. Use the plan's internal id (from get_test_plan or search_test_plans). testcycleIds are numeric integer IDs. Returns 204 on success.",
+  "qtm4j_link_test_cycles_to_plan",
   {
-    id: ID.describe("Test plan ID"),
-    testcycleIds: z.array(z.number().int()).describe("Test cycle IDs to link"),
+    title: "Link Test Cycles to Plan",
+    description:
+      "Link existing test cycles to a test plan. Use the plan's internal id. testcycleIds are numeric integer IDs.",
+    inputSchema: {
+      id: ID.describe("Test plan ID"),
+      testcycleIds: z.array(z.number().int()).describe("Test cycle IDs to link"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ id, testcycleIds }) => {
     await qtmFetch(`/testplans/${id}/testcycles`, {
       method: "PUT",
       body: JSON.stringify({ testcycleIds }),
     });
-    return ok({ message: `Test cycles linked to plan ${id}` });
+    return okJSON({ message: `Test cycles linked to plan ${id}` });
   }
 );
 
 tool(
-  "get_linked_test_cycles",
-  "List all test cycles currently linked to a test plan. Returns paginated list with id, key, status, priority per cycle. Use the plan's internal id (not key).",
+  "qtm4j_get_linked_test_cycles",
   {
-    id: ID.describe("Test plan ID"),
-    ...Pagination,
+    title: "List Linked Test Cycles",
+    description: "List all test cycles currently linked to a test plan. Use the plan's internal id (not key).",
+    inputSchema: {
+      id: ID.describe("Test plan ID"),
+      response_format: ResponseFormat,
+      ...Pagination,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ id, startAt, maxResults, sort, fields }) =>
-    ok(
-      await qtmFetch(`/testplans/${id}/testcycles${qs({ startAt, maxResults, sort, fields })}`, {
-        method: "POST",
-        body: JSON.stringify({ filter: {} }),
-      })
-    )
+  async ({ id, startAt, maxResults, sort, fields, response_format }) => {
+    const data = await qtmFetch(
+      `/testplans/${id}/testcycles${qs({ startAt, maxResults, sort, fields })}`,
+      { method: "POST", body: JSON.stringify({ filter: {} }) }
+    );
+    return response_format === "markdown" ? okMarkdown(fmtSearchResults("Linked Test Cycles", data)) : okJSON(data);
+  }
 );
 
 tool(
-  "unlink_test_cycles_from_plan",
-  "Remove the link between one or more test cycles and a test plan. Does not delete the cycles themselves. Returns 204 on success.",
+  "qtm4j_unlink_test_cycles_from_plan",
   {
-    id: ID.describe("Test plan ID"),
-    testcycleIds: z.array(z.number().int()).describe("Test cycle IDs to unlink"),
+    title: "Unlink Test Cycles from Plan",
+    description: "Remove the link between one or more test cycles and a test plan. Does not delete the cycles themselves.",
+    inputSchema: {
+      id: ID.describe("Test plan ID"),
+      testcycleIds: z.array(z.number().int()).describe("Test cycle IDs to unlink"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ id, testcycleIds }) => {
     await qtmFetch(`/testplans/${id}/testcycles`, {
       method: "DELETE",
       body: JSON.stringify({ testcycleIds }),
     });
-    return ok({ message: `Test cycles unlinked from plan ${id}` });
+    return okJSON({ message: `Test cycles unlinked from plan ${id}` });
   }
 );
 
@@ -621,63 +896,74 @@ tool(
 // ─────────────────────────────────────────────────────────────────────────────
 
 tool(
-  "list_folders",
-  "List folders of a given type in a project as a nested tree with id, name, parentId, and children. Provide folderId to return only that subtree instead of the full project tree (recommended for large projects).",
+  "qtm4j_list_folders",
   {
-    projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
-    folderType: z
-      .enum(["TESTCASE", "TESTCYCLE", "TESTPLAN"])
-      .describe("Folder type to list"),
-    folderId: z.number().int().optional().describe("Return only this folder and its children (subtree). Omit to get the full project tree."),
+    title: "List Folders",
+    description:
+      "List folders of a given type as a nested tree with id, name, parentId, and children. STRONGLY RECOMMENDED to pass folderId for large projects to return only that subtree — full project trees can exceed response size limits.",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
+      folderType: z.enum(["TESTCASE", "TESTCYCLE", "TESTPLAN"]).describe("Folder type to list"),
+      folderId: z
+        .number()
+        .int()
+        .optional()
+        .describe("Return only this folder and its children (subtree). Strongly recommended for large projects."),
+      response_format: ResponseFormat,
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ projectId, folderType, folderId }) => {
-    const folderSegments: Record<string, string> = {
-      TESTCASE: "testcase-folders",
-      TESTCYCLE: "testcycle-folders",
-      TESTPLAN: "testplan-folders",
-    };
-    const typeSegment = folderSegments[folderType];
-    const data = await qtmFetch(`/projects/${projectId}/${typeSegment}`) as any;
-    if (folderId === undefined) return ok(data);
+  async ({ projectId, folderType, folderId, response_format }) => {
+    const data = (await qtmFetch(`/projects/${projectId}/${FOLDER_SEGMENT[folderType]}`)) as any;
     const nodes = data?.data ?? data ?? [];
-    // Find and return only the subtree rooted at folderId
-    function findSubtree(items: any[]): any | null {
-      for (const item of items) {
-        if (item.id === folderId) return item;
-        const found = findSubtree(item.children ?? []);
-        if (found) return found;
+
+    let result: any;
+    if (folderId === undefined) {
+      result = nodes;
+    } else {
+      function findSubtree(items: any[]): any | null {
+        for (const item of items) {
+          if (item.id === folderId) return item;
+          const found = findSubtree(item.children ?? []);
+          if (found) return found;
+        }
+        return null;
       }
-      return null;
+      const subtree = findSubtree(nodes);
+      if (!subtree) return okJSON({ error: `Folder ${folderId} not found` });
+      result = [subtree];
     }
-    const subtree = findSubtree(nodes);
-    return ok(subtree ?? { error: `Folder ${folderId} not found` });
+
+    if (response_format === "markdown") {
+      const header = folderId !== undefined ? `# Folder Subtree (${folderId})` : `# ${folderType} Folders`;
+      return okMarkdown(`${header}\n\n${fmtFolderTree(result)}`);
+    }
+    return okJSON(folderId !== undefined ? result[0] : result);
   }
 );
 
 tool(
-  "create_folder",
-  "Create a new folder under an existing parent folder. Use parentId=0 for root-level. folderName is required. Returns the created folder with its id. Use list_folders first to find valid parentId values.",
+  "qtm4j_create_folder",
   {
-    projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
-    folderName: z.string().describe("Folder name"),
-    folderType: z.enum(["TESTCASE", "TESTCYCLE", "TESTPLAN"]).describe("Folder type"),
-    parentId: z.number().int().describe("Parent folder ID (use 0 for root)"),
-    description: z.string().optional().describe("Folder description"),
+    title: "Create Folder",
+    description:
+      "Create a new folder under an existing parent folder. Use parentId=0 for root-level. Use qtm4j_list_folders first to find valid parentId values.",
+    inputSchema: {
+      projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10011)"),
+      folderName: z.string().describe("Folder name"),
+      folderType: z.enum(["TESTCASE", "TESTCYCLE", "TESTPLAN"]).describe("Folder type"),
+      parentId: z.number().int().describe("Parent folder ID (use 0 for root)"),
+      description: z.string().optional().describe("Folder description"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async ({ projectId, folderType, folderName, parentId, description }) => {
-    const folderSegments: Record<string, string> = {
-      TESTCASE: "testcase-folders",
-      TESTCYCLE: "testcycle-folders",
-      TESTPLAN: "testplan-folders",
-    };
-    const typeSegment = folderSegments[folderType];
-    return ok(
-      await qtmFetch(`/projects/${projectId}/${typeSegment}`, {
+  async ({ projectId, folderType, folderName, parentId, description }) =>
+    okJSON(
+      await qtmFetch(`/projects/${projectId}/${FOLDER_SEGMENT[folderType]}`, {
         method: "POST",
         body: JSON.stringify({ folderName, parentId, description }),
       })
-    );
-  }
+    )
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -685,47 +971,61 @@ tool(
 // ─────────────────────────────────────────────────────────────────────────────
 
 tool(
-  "link_automation_rule",
-  "Associate an automation rule with a test cycle so it can be triggered for that cycle. automationRuleKey is the rule's string key from your QMetry automation config. Returns 200 on success.",
+  "qtm4j_link_automation_rule",
   {
-    cycleId: ID.describe("Test cycle ID"),
-    automationRuleKey: z.string().describe("Automation rule key to link"),
+    title: "Link Automation Rule to Cycle",
+    description:
+      "Associate an automation rule with a test cycle so it can be triggered for that cycle. automationRuleKey is the rule's string key from your QMetry automation config.",
+    inputSchema: {
+      cycleId: ID.describe("Test cycle ID"),
+      automationRuleKey: z.string().describe("Automation rule key to link"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ cycleId, automationRuleKey }) => {
     const data = await qtmFetch(
       `/testcycles/${cycleId}/automation-rule/link/${automationRuleKey}`,
       { method: "PUT", body: JSON.stringify({}) }
     );
-    return ok(data ?? { message: "Automation rule linked" });
+    return okJSON(data ?? { message: "Automation rule linked" });
   }
 );
 
 tool(
-  "unlink_automation_rule",
-  "Remove the association between an automation rule and a test cycle. Returns 200 on success.",
+  "qtm4j_unlink_automation_rule",
   {
-    cycleId: ID.describe("Test cycle ID"),
-    automationRuleKey: z.string().describe("Automation rule key to unlink"),
+    title: "Unlink Automation Rule from Cycle",
+    description: "Remove the association between an automation rule and a test cycle.",
+    inputSchema: {
+      cycleId: ID.describe("Test cycle ID"),
+      automationRuleKey: z.string().describe("Automation rule key to unlink"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   async ({ cycleId, automationRuleKey }) => {
     const data = await qtmFetch(
       `/testcycles/${cycleId}/automation-rule/unlink/${automationRuleKey}`,
       { method: "PUT", body: JSON.stringify({}) }
     );
-    return ok(data ?? { message: "Automation rule unlinked" });
+    return okJSON(data ?? { message: "Automation rule unlinked" });
   }
 );
 
 tool(
-  "run_automation_rules",
-  "Trigger an automation rule to run against a specific test cycle. testCycleId is the internal id string (from get_test_cycle). Returns a background task object with taskId and progressUrl to poll for completion.",
+  "qtm4j_run_automation_rules",
   {
-    automationRuleKey: z.string().describe("Automation rule key to run"),
-    projectId: z.number().int().describe("Jira project numeric ID (e.g. 10011)"),
-    testCycleId: z.string().describe("Internal test cycle ID (from search_test_cycles)"),
+    title: "Run Automation Rule",
+    description:
+      "Trigger an automation rule to run against a specific test cycle. testCycleId is the internal id string (from qtm4j_get_test_cycle). Returns a background task object with taskId and progressUrl.",
+    inputSchema: {
+      automationRuleKey: z.string().describe("Automation rule key to run"),
+      projectId: z.number().int().describe("Jira project numeric ID (e.g. 10011)"),
+      testCycleId: z.string().describe("Internal test cycle ID (from qtm4j_search_test_cycles)"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   async ({ automationRuleKey, projectId, testCycleId }) =>
-    ok(
+    okJSON(
       await qtmFetch(`/automation-rule/${automationRuleKey}/run`, {
         method: "POST",
         body: JSON.stringify({ projectId, testCycleId }),
@@ -738,5 +1038,5 @@ tool(
 const transport = new StdioServerTransport();
 await server.connect(transport);
 process.stderr.write(
-  `QTM4J MCP server running — region: ${REGION}, base URL: ${BASE_URL}\n`
+  `qtm4j-mcp-server running — region: ${REGION}, base URL: ${BASE_URL}\n`
 );
