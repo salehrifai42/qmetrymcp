@@ -28,7 +28,7 @@ Edit your config file and restart Claude:
   "mcpServers": {
     "qtm4j": {
       "command": "npx",
-      "args": ["-y", "qtm4j-mcp-server"],
+      "args": ["-y", "qtm4j-mcp-server@^0.1"],
       "env": {
         "QTM4J_API_KEY": "your-api-key-here",
         "QTM4J_REGION": "US"
@@ -41,7 +41,7 @@ Edit your config file and restart Claude:
 ### Claude Code (CLI)
 
 ```bash
-claude mcp add qtm4j -e QTM4J_API_KEY=your-api-key-here -e QTM4J_REGION=US -- npx -y qtm4j-mcp-server
+claude mcp add qtm4j -e QTM4J_API_KEY=your-api-key-here -e QTM4J_REGION=US -- npx -y qtm4j-mcp-server@^0.1
 ```
 
 ### VS Code (GitHub Copilot Agent mode)
@@ -54,7 +54,7 @@ Create `.vscode/mcp.json` in your workspace:
     "qtm4j": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "qtm4j-mcp-server"],
+      "args": ["-y", "qtm4j-mcp-server@^0.1"],
       "env": {
         "QTM4J_API_KEY": "${env:QTM4J_API_KEY}",
         "QTM4J_REGION": "US"
@@ -75,12 +75,40 @@ Add to `~/.cursor/mcp.json` (or `<project>/.cursor/mcp.json` for project-level):
   "mcpServers": {
     "qtm4j": {
       "command": "npx",
-      "args": ["-y", "qtm4j-mcp-server"],
+      "args": ["-y", "qtm4j-mcp-server@^0.1"],
       "env": { "QTM4J_API_KEY": "your-api-key-here" }
     }
   }
 }
 ```
+
+> The example configs above pin the package to `^0.1` so a future breaking release won't auto-upgrade you. Drop the `@^0.1` suffix if you'd rather always run the latest.
+
+### Global install (faster startup)
+
+`npx` re-resolves the package on every launch, which adds a few seconds of startup latency. If you use the server frequently, install it globally and point your client at the binary directly:
+
+```bash
+npm install -g qtm4j-mcp-server
+```
+
+Then in your client config, replace the `npx` command:
+
+```json
+{
+  "mcpServers": {
+    "qtm4j": {
+      "command": "qtm4j-mcp-server",
+      "env": {
+        "QTM4J_API_KEY": "your-api-key-here",
+        "QTM4J_REGION": "US"
+      }
+    }
+  }
+}
+```
+
+Tradeoff: instant startup and works offline, but you'll need to run `npm update -g qtm4j-mcp-server` to get new versions.
 
 ## Configuration
 
