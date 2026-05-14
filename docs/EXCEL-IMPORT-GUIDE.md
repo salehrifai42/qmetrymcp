@@ -16,6 +16,8 @@ python3 scripts/import-xlsx-to-qmetry.py --input "Input/<batch-name>"
 python3 scripts/import-xlsx-to-qmetry.py --input "Input/<batch-name>" --fix-existing
 ```
 
+Every run prints a **PLAN** header first — `N workbooks, M cases, S steps` — *before* any QMetry call. Use it as the upfront sanity check: if the step count looks low compared to what you eyeball in the workbooks, something is off (likely a schema mismatch — add a header alias) and you should abort with Ctrl-C.
+
 The script is idempotent: it writes every result to `scripts/import-<batch>.log.csv` and skips already-imported `(workbook, e2e_id)` pairs on rerun.
 
 ## Folder model
@@ -128,7 +130,15 @@ curl -s -H "apiKey: $QTM4J_API_KEY" -H "Accept: application/json" \
 ### 11. AU region uses a different host
 `https://syd-qtmcloud.qmetry.com` (not `qtmcloud-au.…`). The script picks this up from `QTM4J_REGION=AU`.
 
-### 12. `--fix-existing` is the recovery hatch
+### 12. Read the PLAN before you let it write
+Every non-dry run prints something like:
+```
+PLAN: 24 workbook(s), 90 test case(s), 2635 step(s)  →  project 10000, parent folder 0 ('CBS 2')
+  largest workbooks by step count: Backup_policy/BackUp_Policy_Crud=846, ...
+```
+If you expected ~2,000+ steps and see 150, **that's the schema-mismatch alarm** — Ctrl-C, add the missing header alias in `HEADER_ALIASES`, re-run with `--dry-run`, and only then proceed. Workbooks that parsed 0 cases get a `⚠` flag.
+
+### 13. `--fix-existing` is the recovery hatch
 If the parser changes after an import (new alias, regex tweak, schema discovered), don't try to delete and re-import. Run `--fix-existing` instead — it re-parses each workbook with the current parser, then PUTs precondition and replaces steps in-place for every `(workbook, e2e_id)` already in the log. Idempotent; safe to rerun.
 
 ## Quick reference — useful field IDs (Generic Project, project 10000)

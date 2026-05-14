@@ -245,6 +245,48 @@ def append_log(log_path: Path, workbook, e2e_id, key, internal_id, status, error
         w.writerow([workbook, e2e_id, key, internal_id, status, error])
 
 
+# ── Plan ──────────────────────────────────────────────────────────────────────
+
+def compute_plan(args):
+    """Walk --input once, parse every workbook, return per-workbook counts."""
+    rows = []  # (subdir, stem, cases, steps, schema_ok)
+    if not args.input.exists():
+        return rows
+    for cat_dir in sorted(p for p in args.input.iterdir() if p.is_dir()):
+        for xlsx in sorted(cat_dir.glob("*.xlsx")):
+            if xlsx.name.startswith("~$") or xlsx.name.startswith("."):
+                continue
+            stem = xlsx.stem.replace("_E2E_TestCases", "")
+            if args.only and args.only.lower() not in stem.lower():
+                continue
+            tcs = list(parse_workbook(xlsx))
+            rows.append((
+                cat_dir.name, stem,
+                len(tcs),
+                sum(len(t["steps"]) for t in tcs),
+                bool(tcs),  # schema_ok = parser produced at least 1 case (or file truly empty)
+            ))
+    return rows
+
+
+def print_plan(args, plan_rows):
+    cases = sum(r[2] for r in plan_rows)
+    steps = sum(r[3] for r in plan_rows)
+    root = args.root_folder_name or args.input.name
+    print(f"PLAN: {len(plan_rows)} workbook(s), {cases} test case(s), {steps} step(s)"
+          f"  →  project {args.project_id}, parent folder {args.parent_folder_id} ({root!r})")
+    empties = [(c, s) for c, s, n, _, _ in plan_rows if n == 0]
+    if empties:
+        print(f"  ⚠ {len(empties)} workbook(s) parsed 0 cases — verify schema is recognized:")
+        for c, s in empties:
+            print(f"      - {c}/{s}")
+    # Top 3 by step count, as a quick sanity dial
+    top = sorted(plan_rows, key=lambda r: -r[3])[:3]
+    if top and top[0][3]:
+        bits = ", ".join(f"{c}/{s}={n}" for c, s, _, n, _ in top)
+        print(f"  largest workbooks by step count: {bits}")
+
+
 # ── Modes ─────────────────────────────────────────────────────────────────────
 
 def fix_existing(args, log_path: Path):
@@ -252,6 +294,10 @@ def fix_existing(args, log_path: Path):
     if not log_path.exists():
         sys.exit(f"No log to fix: {log_path}")
     rows = [r for r in csv.DictReader(open(log_path)) if r["status"] == "ok"]
+    plan = compute_plan(args)
+    print(f"PLAN (fix-existing): {len(rows)} logged cases will be re-parsed, "
+          f"{sum(r[3] for r in plan)} step(s) total across {len(plan)} workbook(s)")
+    print()
     by_wb: dict[str, list] = {}
     for r in rows:
         by_wb.setdefault(r["workbook"], []).append(r)
@@ -291,6 +337,9 @@ def fix_existing(args, log_path: Path):
 def run_import(args, log_path: Path):
     if not args.input.exists():
         sys.exit(f"Input directory not found: {args.input}")
+
+    print_plan(args, compute_plan(args))
+    print()
 
     seen = load_log(log_path)
     root_name = args.root_folder_name or args.input.name
