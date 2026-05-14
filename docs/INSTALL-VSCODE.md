@@ -5,8 +5,8 @@ A step-by-step guide for installing the [`qtm4j-mcp-server`](https://www.npmjs.c
 ## Prerequisites
 
 - VS Code with the **GitHub Copilot** and **GitHub Copilot Chat** extensions installed and signed in (Copilot subscription required)
-- Node.js 18+ — verify with `node -v`
-- A QMetry API key — generate one in QMetry → *API Keys*
+- Node.js 18+ — verify with `node -v`. If missing, install from [nodejs.org](https://nodejs.org) or via a package manager (`brew install node` on macOS, `winget install OpenJS.NodeJS` on Windows).
+- A QMetry API key — in QMetry, click your avatar → **API Keys** → *Generate*, then copy the key.
 
 ## Steps
 
@@ -80,6 +80,7 @@ Open any QMetry project URL: `…?projectId=10000&projectKey=PROJ`. Tools requir
 - **401 Unauthorized** — wrong API key. Reset with `Cmd/Ctrl + Shift + P` → *MCP: Reset Inputs*, then reload.
 - **Slow first launch** — `npx` downloads on first run per machine; subsequent runs use the cache. For instant startup, see the [Global install](../README.md#global-install-faster-startup) section in the main README.
 - **Want it for all projects?** Move the same configuration into VS Code **user** `settings.json` under `"mcp.servers"` instead of `.vscode/mcp.json`.
+- **macOS `EACCES` on `npm install -g`** — happens when Node was installed via the official `.pkg` (root-owned `/usr/local`). Fix once: `npm config set prefix ~/.npm-global && echo 'export PATH=~/.npm-global/bin:$PATH' >> ~/.zshrc && source ~/.zshrc`, then retry. Homebrew-installed Node avoids this entirely.
 
 ## Other install paths
 

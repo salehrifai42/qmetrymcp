@@ -22,6 +22,12 @@ field_reference.json
 # Tenant-specific metadata dumps (project IDs, folder names, internal counts)
 docs/project-*/
 
+# Local input workbooks (tenant-specific test case sources)
+Input/
+
+# Import run logs
+scripts/import-*.log.csv
+
 # SSH keys - never commit these
 fine
 fine.pub
