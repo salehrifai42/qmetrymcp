@@ -248,10 +248,13 @@ def append_log(log_path: Path, workbook, e2e_id, key, internal_id, status, error
 # ── Plan ──────────────────────────────────────────────────────────────────────
 
 def compute_plan(args):
-    """Walk --input once, parse every workbook, return per-workbook counts."""
-    rows = []  # (subdir, stem, cases, steps, schema_ok)
+    """Walk --input once, parse every workbook. Returns (rows, samples).
+    rows: per-workbook (subdir, stem, cases, steps, parsed_cases_list).
+    samples: 3 representative test cases (smallest non-zero, median, largest)."""
+    rows = []
+    all_cases = []  # (subdir, stem, tc)
     if not args.input.exists():
-        return rows
+        return rows, []
     for cat_dir in sorted(p for p in args.input.iterdir() if p.is_dir()):
         for xlsx in sorted(cat_dir.glob("*.xlsx")):
             if xlsx.name.startswith("~$") or xlsx.name.startswith("."):
@@ -260,16 +263,30 @@ def compute_plan(args):
             if args.only and args.only.lower() not in stem.lower():
                 continue
             tcs = list(parse_workbook(xlsx))
-            rows.append((
-                cat_dir.name, stem,
-                len(tcs),
-                sum(len(t["steps"]) for t in tcs),
-                bool(tcs),  # schema_ok = parser produced at least 1 case (or file truly empty)
-            ))
-    return rows
+            rows.append((cat_dir.name, stem, len(tcs), sum(len(t["steps"]) for t in tcs), tcs))
+            for tc in tcs:
+                all_cases.append((cat_dir.name, stem, tc))
+    # Pick a smallest-non-zero / median / largest sample by step count
+    samples = []
+    if all_cases:
+        non_zero = sorted([c for c in all_cases if c[2]["steps"]], key=lambda c: len(c[2]["steps"]))
+        if non_zero:
+            samples.append(non_zero[0])                       # smallest with ≥1 step
+            samples.append(non_zero[len(non_zero) // 2])      # median
+            samples.append(non_zero[-1])                      # largest
+        # deduplicate while preserving order
+        seen_ids = set()
+        deduped = []
+        for s in samples:
+            key = (s[1], s[2]["e2e_id"])
+            if key not in seen_ids:
+                seen_ids.add(key)
+                deduped.append(s)
+        samples = deduped
+    return rows, samples
 
 
-def print_plan(args, plan_rows):
+def print_plan(args, plan_rows, samples):
     cases = sum(r[2] for r in plan_rows)
     steps = sum(r[3] for r in plan_rows)
     root = args.root_folder_name or args.input.name
@@ -280,11 +297,18 @@ def print_plan(args, plan_rows):
         print(f"  ⚠ {len(empties)} workbook(s) parsed 0 cases — verify schema is recognized:")
         for c, s in empties:
             print(f"      - {c}/{s}")
-    # Top 3 by step count, as a quick sanity dial
     top = sorted(plan_rows, key=lambda r: -r[3])[:3]
     if top and top[0][3]:
         bits = ", ".join(f"{c}/{s}={n}" for c, s, _, n, _ in top)
         print(f"  largest workbooks by step count: {bits}")
+    if samples:
+        print(f"  sample test cases (smallest/median/largest by step count) — verify these look right:")
+        for cat, stem, tc in samples:
+            first_step = (tc["steps"][0]["stepDetails"][:70] + "…") if tc["steps"] else "<no steps>"
+            print(f"    • {cat}/{stem}  {tc['e2e_id']}  steps={len(tc['steps'])}  pri={tc['priority_id']}"
+                  f"  type={tc['test_type'] or '-'}")
+            print(f"        summary: {(tc['summary'] or '')[:90]}")
+            print(f"        step 1:  {first_step}")
 
 
 # ── Modes ─────────────────────────────────────────────────────────────────────
@@ -294,9 +318,13 @@ def fix_existing(args, log_path: Path):
     if not log_path.exists():
         sys.exit(f"No log to fix: {log_path}")
     rows = [r for r in csv.DictReader(open(log_path)) if r["status"] == "ok"]
-    plan = compute_plan(args)
+    plan_rows, samples = compute_plan(args)
     print(f"PLAN (fix-existing): {len(rows)} logged cases will be re-parsed, "
-          f"{sum(r[3] for r in plan)} step(s) total across {len(plan)} workbook(s)")
+          f"{sum(r[3] for r in plan_rows)} step(s) total across {len(plan_rows)} workbook(s)")
+    if samples:
+        print(f"  sample test cases (smallest/median/largest by step count):")
+        for cat, stem, tc in samples:
+            print(f"    • {cat}/{stem}  {tc['e2e_id']}  steps={len(tc['steps'])}  pri={tc['priority_id']}")
     print()
     by_wb: dict[str, list] = {}
     for r in rows:
@@ -338,7 +366,8 @@ def run_import(args, log_path: Path):
     if not args.input.exists():
         sys.exit(f"Input directory not found: {args.input}")
 
-    print_plan(args, compute_plan(args))
+    plan_rows, samples = compute_plan(args)
+    print_plan(args, plan_rows, samples)
     print()
 
     seen = load_log(log_path)

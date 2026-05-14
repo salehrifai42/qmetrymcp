@@ -131,12 +131,21 @@ curl -s -H "apiKey: $QTM4J_API_KEY" -H "Accept: application/json" \
 `https://syd-qtmcloud.qmetry.com` (not `qtmcloud-au.…`). The script picks this up from `QTM4J_REGION=AU`.
 
 ### 12. Read the PLAN before you let it write
-Every non-dry run prints something like:
+Every non-dry run prints a planning block:
 ```
 PLAN: 24 workbook(s), 90 test case(s), 2635 step(s)  →  project 10000, parent folder 0 ('CBS 2')
   largest workbooks by step count: Backup_policy/BackUp_Policy_Crud=846, ...
+  sample test cases (smallest/median/largest by step count) — verify these look right:
+    • Backup/CBS_Backup_CRUD  CBSBC-E2E-002  steps=1  pri=0  type=API
+        summary: Cross-Project Security — Cannot Create Backup …
+        step 1:  Given a valid auth token for Project A; attempt to POST …
+    • …
 ```
-If you expected ~2,000+ steps and see 150, **that's the schema-mismatch alarm** — Ctrl-C, add the missing header alias in `HEADER_ALIASES`, re-run with `--dry-run`, and only then proceed. Workbooks that parsed 0 cases get a `⚠` flag.
+Two things to check:
+1. **Totals** — if you expected ~2,000+ steps and see 150, **schema-mismatch alarm** → Ctrl-C, add a header alias in `HEADER_ALIASES`, re-run `--dry-run`, then proceed.
+2. **Samples** — read the summary + first-step text. If the summary looks like a step description (or vice-versa), columns are misaligned. Fix `HEADER_ALIASES` before continuing.
+
+Workbooks that parsed 0 cases get a `⚠` flag listed separately.
 
 ### 13. `--fix-existing` is the recovery hatch
 If the parser changes after an import (new alias, regex tweak, schema discovered), don't try to delete and re-import. Run `--fix-existing` instead — it re-parses each workbook with the current parser, then PUTs precondition and replaces steps in-place for every `(workbook, e2e_id)` already in the log. Idempotent; safe to rerun.

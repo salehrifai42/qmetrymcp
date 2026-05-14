@@ -53,9 +53,15 @@ export QTM4J_API_KEY=$(python3 -c "import json; print(json.load(open('config.jso
 python3 scripts/import-xlsx-to-qmetry.py --input "<input>" --parent-folder-id <id> --dry-run
 ```
 
-Read the **PLAN** header it prints first: `N workbooks, M cases, S steps`. **Show those numbers to the user and ask them to confirm.** This is the schema-mismatch detector — if step count looks low, abort.
+Read the **PLAN** header carefully. It prints three things:
 
-If any workbook shows `⚠ parsed 0 cases`, that's an unrecognized schema. Open the file, look at the header row, and add the new header alias to `HEADER_ALIASES` in `scripts/import-xlsx-to-qmetry.py`. Don't proceed until every workbook parses cleanly.
+1. Totals: `N workbooks, M cases, S steps`.
+2. Largest workbooks by step count (sanity dial).
+3. **Three sample test cases** (smallest / median / largest by step count) with summary + first-step preview.
+
+**Show all three to the user. Ask them to confirm both the totals and the sample summaries/steps look right.** If a sample's summary reads like a step description, columns are mis-mapped — abort and fix `HEADER_ALIASES`.
+
+If any workbook shows `⚠ parsed 0 cases`, open it, look at the header row, and add the new header alias to `HEADER_ALIASES`. Don't proceed until every workbook parses cleanly.
 
 ### Step 5 — Run
 
