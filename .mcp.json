@@ -1,11 +1,3 @@
 {
-  "mcpServers": {
-    "qtm4j": {
-      "command": "node",
-      "args": ["./dist/index.js"],
-      "env": {
-        "QTM4J_REGION": "US"
-      }
-    }
-  }
+  "mcpServers": {}
 }

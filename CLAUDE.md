@@ -80,14 +80,14 @@ const SearchFilters = { folderId, status, priority, assignee, query };
 | File | Purpose |
 |---|---|
 | `config.json` | API key + project ID for local use |
-| `field_reference.json` | Real IDs/names for statuses, priorities, environments, builds, labels, components fetched from project 10000 |
+| `field_reference.json` | Real IDs/names for statuses, priorities, environments, builds, labels, components fetched from your project |
 | `qtm4j_openapi_spec.json` | Full OpenAPI spec (1MB), fetched from SwaggerHub |
 | `config.template.json` | Committed template — copy to `config.json` |
 
 ### QTM4J API quirks
 
-- `projectId` must be **numeric** (e.g. `10000`), never the key string (`"FS"`).
-- Keys follow the pattern `PROJ-TC-*` (test cases), `PROJ-TR-*` (cycles), `PROJ-TP-*` (plans).
-- The GET endpoints for a single resource accept either the internal ID or the key (`PROJ-TR-747`). Search/execution endpoints require the internal `id` from a prior search response.
+- `projectId` must be **numeric** (e.g. `10000`), never the key string (`"<KEY>"`).
+- Keys follow the pattern `<KEY>-TC-*` (test cases), `<KEY>-TR-*` (cycles), `<KEY>-TP-*` (plans).
+- The GET endpoints for a single resource accept either the internal ID or the key (`<KEY>-TR-123`). Search/execution endpoints require the internal `id` from a prior search response.
 - 204 responses return `null` body; the tools wrap these as `{ message: "…" }`.
 - AU region URL: `https://syd-qtmcloud.qmetry.com` (not `qtmcloud-au`).

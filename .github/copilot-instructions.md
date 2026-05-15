@@ -62,8 +62,8 @@ const SearchFilters = { folderId, status, priority, assignee, query };
   - `GET/POST /projects/{projectId}/testcycle-folders`
   - `GET/POST /projects/{projectId}/testplan-folders`
 - **Automation run** — `POST /automation-rule/{key}/run` with body `{ projectId, testCycleId }`.
-- `projectId` must be **numeric** (e.g. `10000`), never the key string (`"FS"`).
-- Keys: `PROJ-TC-*` (test cases), `PROJ-TR-*` (cycles), `PROJ-TP-*` (plans).
+- `projectId` must be **numeric** (e.g. `10000`), never the key string (`"<KEY>"`).
+- Keys: `<KEY>-TC-*` (test cases), `<KEY>-TR-*` (cycles), `<KEY>-TP-*` (plans).
 - GET single-resource endpoints accept either internal ID or key. Search/execution endpoints require the internal `id` from a prior search response.
 - 204 responses return `null` body; tools wrap these as `{ message: "…" }`.
 - AU region URL: `https://syd-qtmcloud.qmetry.com` (not `qtmcloud-au`).

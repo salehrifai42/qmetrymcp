@@ -66,13 +66,13 @@ In the Copilot Chat panel, click the 🛠 *tools* icon. You should see `qtm4j_*`
 
 ## Try it
 
-> Search QMetry project `10000` for test cases with status "Approved" — show me the first 5.
+> Search QMetry project `<projectId>` for test cases with status "Approved" — show me the first 5.
 
 Copilot will call `qtm4j_search_test_cases` and render the results.
 
 ## Finding your `projectId`
 
-Open any QMetry project URL: `…?projectId=10000&projectKey=PROJ`. Tools require the **numeric** `10000` — not the project key `"FS"`.
+Open any QMetry project URL: `…?projectId=<numeric-id>&projectKey=<KEY>`. Tools require the **numeric** ID, not the project key string.
 
 ## Troubleshooting
 

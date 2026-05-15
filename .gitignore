@@ -22,6 +22,9 @@ field_reference.json
 # Tenant-specific metadata dumps (project IDs, folder names, internal counts)
 docs/project-*/
 
+# Tenant-specific slash command (built from field_reference.json) — ship qtm4j.template.md instead
+.claude/commands/qtm4j.md
+
 # Local input workbooks (tenant-specific test case sources)
 Input/
 

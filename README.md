@@ -147,18 +147,18 @@ Once connected, ask your assistant something like:
 
 The client will call `qtm4j_search_test_cases` and render the response.
 
-> *Get all executions in test cycle PROJ-TR-747 and mark any unexecuted ones as Pass.*
+> *Get all executions in test cycle `<KEY>-TR-747` and mark any unexecuted ones as Pass.*
 
 ## Example tool calls
 
-> Replace `10000` below with your numeric Jira project ID. Find it in the project URL: `…?projectId=10000&projectKey=PROJ`.
+> Replace `<projectId>` and `<KEY>` with your tenant's numeric Jira project ID and project key. Find them in the project URL: `…?projectId=<projectId>&projectKey=<KEY>`. Use `qtm4j_get_execution_results` to discover your tenant's `executionResultId` values.
 
 ```jsonc
 // Search test cases
 {
   "name": "qtm4j_search_test_cases",
   "arguments": {
-    "projectId": 10000,
+    "projectId": "<projectId>",
     "status": ["Approved"],
     "maxResults": 20,
     "response_format": "markdown"
@@ -166,13 +166,12 @@ The client will call `qtm4j_search_test_cases` and render the response.
 }
 
 // Update an execution result
-// (executionResultId: 0=Pass, 0=Fail, 0=Not Executed)
 {
   "name": "qtm4j_update_test_execution",
   "arguments": {
-    "cycleId": "gxMbioKJsyEr3E",
-    "testCaseExecutionId": 287595809,
-    "executionResultId": 0,
+    "cycleId": "<internal-cycle-id>",
+    "testCaseExecutionId": "<internal-tc-execution-id>",
+    "executionResultId": "<pass-id>",
     "comment": "Verified on staging"
   }
 }
@@ -182,9 +181,9 @@ The client will call `qtm4j_search_test_cases` and render the response.
 
 - **Tools don't appear in my client.** Restart the client after editing config. Check `claude mcp list` (Claude Code) or VS Code's MCP panel for connection status. On first run, `npx -y qtm4j-mcp-server` may take a few seconds to download the package.
 - **401 Unauthorized.** Your `QTM4J_API_KEY` is invalid or expired. Generate a new one in QMetry → *API Keys*.
-- **404 on execution or search endpoints.** Many endpoints want the **internal numeric `id`**, not the human key like `PROJ-TR-747`. Call `qtm4j_get_test_cycle` first to translate the key into the internal id.
+- **404 on execution or search endpoints.** Many endpoints want the **internal numeric `id`**, not the human key like `<KEY>-TR-747`. Call `qtm4j_get_test_cycle` first to translate the key into the internal id.
 - **Empty or oversized folder response.** Pass `folderId` to `qtm4j_list_folders` to scope to a subtree — full project trees on large projects can exceed the response size limit.
-- **`projectId` rejected.** Use the **numeric** Jira project ID (e.g. `10000`), not the project key (`"FS"`). You can find it in the Jira project URL: `…?projectId=10000&projectKey=PROJ`.
+- **`projectId` rejected.** Use the **numeric** Jira project ID, not the project key string. You can find it in the Jira project URL: `…?projectId=<numeric-id>&projectKey=<KEY>`.
 
 ## Notes
 

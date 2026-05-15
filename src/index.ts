@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import dotenv from "dotenv";
-dotenv.config({ override: true });
+// override:false → env vars from the parent process (Claude Code MCP config) win over `.env`,
+// so a stale `.env` in the repo can't shadow a freshly-rotated key passed via the MCP launcher.
+dotenv.config({ override: false });
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
@@ -346,8 +348,8 @@ tool(
       projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10000)"),
       summary: z.string().describe("Test case title/summary"),
       precondition: z.string().optional().describe("Precondition / description text"),
-      priority: z.number().int().optional().describe("Priority integer ID (e.g. 0 for High)"),
-      status: z.number().int().optional().describe("Status integer ID (e.g. 0 for Done)"),
+      priority: z.number().int().optional().describe("Priority integer ID — use qtm4j_get_priorities to discover"),
+      status: z.number().int().optional().describe("Status integer ID — use qtm4j_get_statuses to discover"),
       assignee: z.string().optional().describe("Assignee Jira account ID"),
       labels: z.array(z.number().int()).optional().describe("Label IDs to attach"),
       components: z.array(z.number().int()).optional().describe("Component IDs"),
@@ -464,20 +466,38 @@ tool(
 );
 
 tool(
+  "qtm4j_archive_test_case",
+  {
+    title: "Archive Test Case",
+    description:
+      "Archive a test case so it can be deleted (or hidden from active views). Uses the dedicated `PUT /testcases/{id}/archive` endpoint — DO NOT try to flip `archived:true` via bulk_update or update_test_case; those return 200 but the flag does not persist in some tenants. After this call, the case is read-only; use qtm4j_delete_test_case to permanently remove it.",
+    inputSchema: {
+      id: ID.describe("Test case UID (from search) or key (e.g. PROJ-TC-32755)"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ id }) => {
+    await qtmFetch(`/testcases/${id}/archive`, { method: "PUT", body: "{}" });
+    return okJSON({ message: `Test case ${id} archived. Call qtm4j_delete_test_case to permanently remove.` });
+  }
+);
+
+tool(
   "qtm4j_delete_test_case",
   {
-    title: "Delete Test Case Version",
+    title: "Delete Test Case",
     description:
-      "Permanently delete a specific version of a test case. If it is the only version, the test case is removed entirely. Irreversible.",
+      "Permanently delete a test case. Irreversible. NOTE: Active (non-archived) test cases cannot be deleted — the API returns `400 You can not delete active Test Case(s)`. Archive first via qtm4j_archive_test_case, then call this. The recommended path uses `DELETE /testcases/{id}` (no version suffix); the legacy `DELETE /testcases/{id}/versions/{n}` returns 404 once the case is archived. Pass `versionNo` only if you need to delete a specific non-latest version of a multi-version test case.",
     inputSchema: {
-      id: ID.describe("Test case ID"),
-      versionNo: z.number().int().describe("Version number to delete"),
+      id: ID.describe("Test case UID or key (e.g. PROJ-TC-32755)"),
+      versionNo: z.number().int().optional().describe("Optional: delete a specific version. Omit to delete the entire test case after archive."),
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
   },
   async ({ id, versionNo }) => {
-    await qtmFetch(`/testcases/${id}/versions/${versionNo}`, { method: "DELETE" });
-    return okJSON({ message: `Test case ${id} version ${versionNo} deleted` });
+    const path = versionNo !== undefined ? `/testcases/${id}/versions/${versionNo}` : `/testcases/${id}`;
+    await qtmFetch(path, { method: "DELETE" });
+    return okJSON({ message: `Test case ${id}${versionNo !== undefined ? ` version ${versionNo}` : ""} deleted` });
   }
 );
 
@@ -486,15 +506,27 @@ tool(
   {
     title: "Clone Test Cases",
     description:
-      "Bulk clone one or more test cases into a target project and optional folder. Returns a background task object with taskId and progressUrl to poll.",
+      "Bulk clone one or more test cases into a target project and optional folder. Each clone gets a fresh key; original test cases keep their existing folder memberships and linkages. Returns a background task with taskId and progressUrl — poll the progressUrl until status is 'Completed' (Title case, not COMPLETED).",
     inputSchema: {
-      testcaseIds: z.array(z.number().int()).describe("Test case IDs to clone"),
-      projectId: z.string().describe("Target project ID or key"),
-      folderId: z.number().int().optional().describe("Target folder ID"),
+      testCaseIds: z.array(z.string()).describe("Test case UIDs (strings, from search_test_cases — e.g. '4qpaflGmcp4gNM')"),
+      projectId: z.union([z.string(), z.number()]).describe("Target project ID (numeric, e.g. 10000)"),
+      folderId: z.union([z.string(), z.number()]).optional().describe("Target folder ID. Use -1 for root."),
+      withAttachments: z.boolean().optional().default(true),
+      withComments: z.boolean().optional().default(true),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
-  async (input) => okJSON(await qtmFetch("/testcases/clone", { method: "POST", body: JSON.stringify(input) }))
+  async (input) =>
+    okJSON(
+      await qtmFetch("/testcases/bulk/clone", {
+        method: "POST",
+        body: JSON.stringify({
+          ...input,
+          projectId: String(input.projectId),
+          folderId: input.folderId === undefined ? undefined : String(input.folderId),
+        }),
+      })
+    )
 );
 
 tool(
@@ -1093,7 +1125,9 @@ tool(
     okJSON(
       await qtmFetch(
         `/testcases/${id}/versions/${versionNo}/teststeps/search${qs({ startAt, maxResults, sort })}`,
-        { method: "POST", body: JSON.stringify({ filter: filter ?? {} }) }
+        // QTM4J quirk: this endpoint wants a bare {} (or {filter:{...}} when non-empty);
+        // sending {"filter":{}} returns HTTP 400 "Invalid request body".
+        { method: "POST", body: JSON.stringify(filter ? { filter } : {}) }
       )
     )
 );
@@ -1152,7 +1186,11 @@ tool(
   {
     title: "Move Test Cases to Folder",
     description:
-      "Move test cases into a different folder (same project). Pass either testcaseIds or a filter. selectedFolderId is the source, targetFolderId is the destination.",
+      "Move test cases into a different folder (same project). Pass either testcaseIds or a filter. " +
+      "IMPORTANT: QMetry test cases support multi-folder membership. " +
+      "`selectedFolderId=-1` *adds* the case to targetFolderId without removing it from any current folder (so the case ends up in BOTH places). " +
+      "To actually relocate, pass the real source folder id as selectedFolderId — that removes the case from that folder. " +
+      "If a case is in multiple folders, you must run one move per source-folder to fully relocate it.",
     inputSchema: {
       projectId: z.union([z.string(), z.number()]),
       selectedFolderId: z.number().int().describe("Source folder ID (-1 for All Test Cases)"),
@@ -1173,7 +1211,7 @@ tool(
   {
     title: "Bulk Update Test Cases",
     description:
-      "Apply a set of field changes to many test cases at once. `fields` is the same shape as update_test_case (priority, status, assignee, labels {mode:'append'|'replace', values:[]}, components, fixVersions, customFields, isAutomated, summary, description, precondition, etc.). Provide testCaseIds or a filter.",
+      "Apply a set of field changes to many test cases at once. `fields` is the same shape as update_test_case (priority, status, assignee, labels {mode:'append'|'replace', values:[]}, components, fixVersions, customFields, isAutomated, summary, description, precondition, etc.). Provide testCaseIds or a filter. NOTE: archiving via `fields:{archived:true}` is a silent no-op in some tenants (returns 'Completed' but the flag doesn't flip) — use qtm4j_archive_test_case which hits the dedicated /archive endpoint.",
     inputSchema: {
       projectId: z.union([z.string(), z.number()]),
       fields: z.record(z.string(), z.any()).describe("Fields to apply to every selected test case"),

@@ -7,7 +7,18 @@
   },
 
   "project": {
-    "projectId": 10000
+    "_note": "Your numeric Jira project ID. Find in any project URL: ?projectId=<numeric-id>&projectKey=<KEY>",
+    "projectId": 0
+  },
+
+  "xlsxImport": {
+    "_note": "Defaults for scripts/import-xlsx-to-qmetry.py. CLI flags override these. componentIds = default components attached to every imported case; leave [] for none.",
+    "parentFolderId": 0,
+    "statusId": 0,
+    "apiTestFieldId": "qcf_0",
+    "apiTestOptionYes": "0",
+    "apiTestOptionNo": "0",
+    "componentIds": []
   },
 
   "executionResultIds": {

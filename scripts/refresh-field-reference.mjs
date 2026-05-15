@@ -5,11 +5,17 @@
  */
 
 const API_KEY = process.env.QTM4J_API_KEY;
-const PROJECT_ID = 10000;
-const BASE = "https://qtmcloud.qmetry.com/rest/api/latest";
+const PROJECT_ID = Number(process.env.QTM4J_PROJECT_ID);
+const BASE = process.env.QTM4J_REGION === "AU"
+  ? "https://syd-qtmcloud.qmetry.com/rest/api/latest"
+  : "https://qtmcloud.qmetry.com/rest/api/latest";
 
 if (!API_KEY) {
   console.error("Error: QTM4J_API_KEY environment variable is required");
+  process.exit(1);
+}
+if (!PROJECT_ID) {
+  console.error("Error: QTM4J_PROJECT_ID environment variable is required (numeric Jira project ID)");
   process.exit(1);
 }
 
@@ -115,9 +121,9 @@ const reference = {
   },
   keyFormats: {
     _description: "Key formats used across the API",
-    testCase: "PROJ-TC-{number}  e.g. PROJ-TC-31950",
-    testCycle: "PROJ-TR-{number}  e.g. PROJ-TR-747",
-    testPlan: "PROJ-TP-{number}  e.g. PROJ-TP-43",
+    testCase: "<KEY>-TC-{number}",
+    testCycle: "<KEY>-TR-{number}",
+    testPlan: "<KEY>-TP-{number}",
   },
   paginationParams: {
     _description: "Supported by all search/list tools",

@@ -4,7 +4,7 @@
 
 Conventions:
 - `projectId` = numeric Jira project ID (e.g. `10000`)
-- `id` accepts either internal ID or key (`PROJ-TC-31950`) on `get_*` endpoints
+- `id` accepts either internal ID or key (`PROJ-TC-123`) on `get_*` endpoints
 - Search/execution endpoints require the internal `id` from a prior search response
 - 204 responses are wrapped as `{ message: "…" }`
 
@@ -43,7 +43,7 @@ Use these once at the start of a session to learn the IDs the project exposes.
 | Tool | Notes |
 |---|---|
 | `create_test_cycle` | |
-| `get_test_cycle` | Accepts key (`PROJ-TR-747`) — call this first to resolve to internal `id` |
+| `get_test_cycle` | Accepts key (`PROJ-TR-123`) — call this first to resolve to internal `id` |
 | `update_test_cycle` | |
 | `delete_test_cycle` | |
 | `search_test_cycles` | |
@@ -98,7 +98,7 @@ Use these once at the start of a session to learn the IDs the project exposes.
 
 ### Cycle key → internal ID
 ```
-get_test_cycle({ id: "PROJ-TR-747" })
+get_test_cycle({ id: "PROJ-TR-123" })
 → data.id = "abc123XYZ"  // use this for execution endpoints
 ```
 
