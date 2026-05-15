@@ -724,6 +724,58 @@ tool(
 );
 
 tool(
+  "qtm4j_link_test_cases_to_cycle",
+  {
+    title: "Link Test Cases to Test Cycle",
+    description:
+      "Link one or more test cases to a test cycle so they appear in its execution list. Pass the cycle's internal id and an array of { id, versionNo } pairs (id is the test case internal UID; versionNo is usually 1).",
+    inputSchema: {
+      id: ID.describe("Test cycle internal ID"),
+      testCases: z
+        .array(
+          z.object({
+            id: z.string().describe("Test case internal UID"),
+            versionNo: z.number().int().describe("Test case version, usually 1"),
+          })
+        )
+        .describe("Test cases to link"),
+      sort: z.string().optional().describe('Sort, e.g. "key:ASC"'),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ id, ...body }) => {
+    const data = await qtmFetch(`/testcycles/${id}/testcases`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return okJSON(data ?? { message: `Linked ${body.testCases.length} test case(s) to cycle ${id}` });
+  }
+);
+
+tool(
+  "qtm4j_unlink_test_cases_from_cycle",
+  {
+    title: "Unlink Test Cases from Test Cycle",
+    description:
+      "Remove one or more linked test cases from a test cycle. Pass the cycle's internal id and an array of testCycleTestCaseMapIds (from qtm4j_get_test_cycle_executions).",
+    inputSchema: {
+      id: ID.describe("Test cycle internal ID"),
+      testCycleTestCaseMapIds: z
+        .array(z.number().int())
+        .describe("Map IDs to unlink (from qtm4j_get_test_cycle_executions)"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ id, testCycleTestCaseMapIds }) => {
+    await qtmFetch(`/testcycles/${id}/testcases`, {
+      method: "DELETE",
+      body: JSON.stringify({ testCycleTestCaseMapIds }),
+    });
+    return okJSON({ message: `Unlinked ${testCycleTestCaseMapIds.length} test case(s) from cycle ${id}` });
+  }
+);
+
+tool(
   "qtm4j_update_test_execution",
   {
     title: "Update Test Execution",
@@ -736,7 +788,9 @@ tool(
       environmentId: z.number().int().optional().describe("Environment ID"),
       buildId: z.number().int().optional().describe("Build ID"),
       comment: z.string().optional().describe("Execution comment"),
-      actualTime: z.number().int().optional().describe("Actual time spent in milliseconds"),
+      actualTime: z.string().optional().describe('Actual time in "HH:MM" format (e.g. "1:30")'),
+      executionAssignee: z.string().optional().describe("Jira account ID of execution assignee"),
+      executionPlannedDate: z.string().optional().describe("Planned execution date (ISO 8601)"),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
