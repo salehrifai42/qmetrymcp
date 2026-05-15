@@ -51,17 +51,38 @@ from pathlib import Path
 
 import openpyxl
 
-# ── Tenant defaults (Generic Project project on US region) ────────────────
-DEFAULT_PROJECT_ID = 10000
-DEFAULT_PARENT_FOLDER_ID = 0       # Refactored_E2E
-DEFAULT_INPUT_DIR = Path(__file__).parent.parent / "Input" / "CBS 2"
-DEFAULT_COMPONENT_IDS = [0]         # CBS
-DEFAULT_STATUS_ID = 0               # Done
-DEFAULT_API_TEST_FIELD_ID = "qcf_0"
-DEFAULT_API_TEST_OPTION_YES = "0"
-DEFAULT_API_TEST_OPTION_NO = "0"
+# ── Tenant defaults loaded from config.json (gitignored) ──────────────────────
+# Keep tenant-specific IDs out of source control — see config.template.json
+# for the shape and fill in your own config.json.
 
-# Workbook P-code → QMetry priority id (project 10000)
+def _load_xlsx_defaults() -> dict:
+    cfg_path = Path(__file__).parent.parent / "config.json"
+    if not cfg_path.exists():
+        return {}
+    try:
+        cfg = json.loads(cfg_path.read_text())
+    except Exception:
+        return {}
+    out: dict = {}
+    project = cfg.get("project") or {}
+    if "projectId" in project:
+        out["project_id"] = project["projectId"]
+    xi = cfg.get("xlsxImport") or {}
+    for k_cfg, k_out in (
+        ("parentFolderId", "parent_folder_id"),
+        ("statusId", "status_id"),
+        ("apiTestFieldId", "api_test_field_id"),
+        ("apiTestOptionYes", "api_test_yes"),
+        ("apiTestOptionNo", "api_test_no"),
+        ("componentIds", "component_ids"),
+    ):
+        if k_cfg in xi:
+            out[k_out] = xi[k_cfg]
+    return out
+
+_XI = _load_xlsx_defaults()
+
+# Workbook P-code → QMetry priority id (project-specific; see qtm4j_get_priorities)
 PRIORITY_MAP = {
     "P1": 0,  # Blocker
     "P2": 0,  # High
@@ -72,14 +93,16 @@ DEFAULT_PRIORITY_ID = 0  # Medium
 
 # Header aliases — extend as new workbook layouts appear. Lower-case match.
 HEADER_ALIASES: dict[str, tuple[str, ...]] = {
-    "e2e_id":    ("e2e test id", "e2e tc id", "test id", "tc id"),
-    "summary":   ("e2e test name", "title", "summary", "test case name"),
+    "e2e_id":    ("e2e test id", "e2e tc id", "test id", "tc id", "e2e id", "e2e test case id"),
+    "summary":   ("e2e test name", "e2e test case name", "title", "summary", "test case name",
+                  "scenario title", "test scenario title"),
     "category":  ("category",),
-    "test_type": ("test type", "type"),
+    "test_type": ("test type", "type", "type (ui/api)"),
     "priority":  ("priority",),
-    "notes":     ("notes / endpoint", "notes/endpoint", "notes", "endpoint", "precondition"),
-    "step_num":  ("step #", "step no", "step number"),
-    "action":    ("step summary (action)", "step summary", "step", "action", "step description"),
+    "notes":     ("notes / endpoint", "notes/endpoint", "notes", "endpoint", "precondition", "preconditions"),
+    "step_num":  ("step #", "step no", "step number", "step#"),
+    "action":    ("step summary (action)", "step summary", "step", "action", "step description",
+                  "test step description"),
     "expected":  ("expected result", "expected", "expected outcome"),
 }
 
@@ -157,22 +180,40 @@ def _is_valid_e2e_id(s: str) -> bool:
     return bool(E2E_ID_RE.match(s)) and "E2E" in s.upper().split("-")
 
 
+def _norm_header(h) -> str:
+    """Lowercase, collapse internal whitespace (incl. newlines), strip."""
+    return " ".join(str(h or "").split()).lower()
+
+
 def _detect_columns(header_row) -> dict[str, int]:
     cols: dict[str, int] = {}
     for i, h in enumerate(header_row):
-        h_low = str(h or "").strip().lower()
+        h_low = _norm_header(h)
         for field, names in HEADER_ALIASES.items():
             if h_low in names and field not in cols:
                 cols[field] = i
     return cols
 
 
+def _find_e2e_sheet(wb) -> str | None:
+    """Match 'E2E_TestCases' / 'E2E Test Cases' / 'e2e testcases' etc."""
+    for name in wb.sheetnames:
+        if "".join(name.lower().split()) in ("e2etestcases", "e2e_testcases"):
+            return name
+    return None
+
+
 def parse_workbook(xlsx_path: Path):
     """Yield test case dicts. Schema-aware via header aliases."""
-    wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=True)
-    if "E2E_TestCases" not in wb.sheetnames:
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True, read_only=False)
+    sheet_name = _find_e2e_sheet(wb)
+    if not sheet_name:
+        print(f"  ! skipping {xlsx_path.name}: no E2E_TestCases sheet (found: {wb.sheetnames})", file=sys.stderr)
         return
-    ws = wb["E2E_TestCases"]
+    ws = wb[sheet_name]
+    if getattr(ws, "auto_filter", None) and ws.auto_filter.ref:
+        print(f"  ! note {xlsx_path.name}: sheet '{sheet_name}' has an active autofilter ({ws.auto_filter.ref}) — "
+              "verify no rows are hidden", file=sys.stderr)
     rows_iter = ws.iter_rows(values_only=True)
     header = next(rows_iter, None)
     if not header:
@@ -198,20 +239,24 @@ def parse_workbook(xlsx_path: Path):
                 current = None
             continue
         if e2e_id:
-            if current:
-                yield current
-            pri_raw = cell(row, "priority")
-            current = {
-                "e2e_id": e2e_id,
-                "summary": (cell(row, "summary") or "").strip()
-                           if isinstance(cell(row, "summary"), str)
-                           else str(cell(row, "summary") or ""),
-                "priority_id": PRIORITY_MAP.get(str(pri_raw or "").strip().upper(), DEFAULT_PRIORITY_ID),
-                "notes": cell(row, "notes") or "",
-                "category": cell(row, "category") or "",
-                "test_type": cell(row, "test_type") or "",
-                "steps": [],
-            }
+            if current and str(e2e_id).strip() == str(current["e2e_id"]).strip():
+                # repeated id on a step row — treat as continuation, not a new case
+                pass
+            else:
+                if current:
+                    yield current
+                pri_raw = cell(row, "priority")
+                current = {
+                    "e2e_id": e2e_id,
+                    "summary": (cell(row, "summary") or "").strip()
+                               if isinstance(cell(row, "summary"), str)
+                               else str(cell(row, "summary") or ""),
+                    "priority_id": PRIORITY_MAP.get(str(pri_raw or "").strip().upper(), DEFAULT_PRIORITY_ID),
+                    "notes": cell(row, "notes") or "",
+                    "category": cell(row, "category") or "",
+                    "test_type": cell(row, "test_type") or "",
+                    "steps": [],
+                }
         if not current:
             continue
         action = cell(row, "action")
@@ -255,6 +300,17 @@ def compute_plan(args):
     all_cases = []  # (subdir, stem, tc)
     if not args.input.exists():
         return rows, []
+    # Workbooks at batch root (no category subfolder) — attach directly under batch folder.
+    for xlsx in sorted(args.input.glob("*.xlsx")):
+        if xlsx.name.startswith("~$") or xlsx.name.startswith("."):
+            continue
+        stem = xlsx.stem.replace("_E2E_TestCases", "")
+        if args.only and args.only.lower() not in stem.lower():
+            continue
+        tcs = list(parse_workbook(xlsx))
+        rows.append((".", stem, len(tcs), sum(len(t["steps"]) for t in tcs), tcs))
+        for tc in tcs:
+            all_cases.append((".", stem, tc))
     for cat_dir in sorted(p for p in args.input.iterdir() if p.is_dir()):
         for xlsx in sorted(cat_dir.glob("*.xlsx")):
             if xlsx.name.startswith("~$") or xlsx.name.startswith("."):
@@ -371,36 +427,61 @@ def run_import(args, log_path: Path):
     print()
 
     seen = load_log(log_path)
+    if args.samples is not None and args.samples > 0:
+        print(f"\n[samples] mode: importing the FIRST {args.samples} new test case(s) only — "
+              f"review them in QMetry, then re-run without --samples to continue.\n")
     root_name = args.root_folder_name or args.input.name
     root_id = None if args.dry_run else find_or_create_folder(args.project_id, root_name, args.parent_folder_id)
     if root_id:
         print(f"[folder] {root_name} -> {root_id}")
 
-    category_dirs = sorted(p for p in args.input.iterdir() if p.is_dir())
+    # Build (cat_dir, cat_label, xlsxs, flatten) list. A virtual "batch-root" entry
+    # collects workbooks sitting directly under args.input — those attach to root_id
+    # with no extra nesting (flatten=True forces wb_folder_id = cat_id = root_id).
+    walk: list[tuple[Path | None, str, list[Path], bool]] = []
+    root_xlsxs = [x for x in sorted(args.input.glob("*.xlsx"))
+                  if not x.name.startswith("~$") and not x.name.startswith(".")]
+    if root_xlsxs:
+        walk.append((None, ".", root_xlsxs, True))
+    for cat_dir in sorted(p for p in args.input.iterdir() if p.is_dir()):
+        xlsxs = [x for x in sorted(cat_dir.glob("*.xlsx"))
+                 if not x.name.startswith("~$") and not x.name.startswith(".")]
+        if xlsxs:
+            walk.append((cat_dir, cat_dir.name, xlsxs, len(xlsxs) == 1))
+
     created = skipped = failed = 0
 
-    for cat_dir in category_dirs:
-        cat_id = None if args.dry_run else find_or_create_folder(args.project_id, cat_dir.name, root_id)
-        if cat_id:
-            print(f"[folder]   {cat_dir.name} -> {cat_id}")
+    for cat_dir, cat_label, xlsxs, flatten in walk:
+        if cat_dir is None:
+            cat_id = root_id
+        else:
+            cat_id = None if args.dry_run else find_or_create_folder(args.project_id, cat_dir.name, root_id)
+            if cat_id:
+                print(f"[folder]   {cat_dir.name} -> {cat_id}")
 
-        for xlsx in sorted(cat_dir.glob("*.xlsx")):
-            if xlsx.name.startswith("~$") or xlsx.name.startswith("."):
-                continue
+        for xlsx in xlsxs:
             stem = xlsx.stem.replace("_E2E_TestCases", "")
             if args.only and args.only.lower() not in stem.lower():
                 continue
             if args.dry_run:
                 tcs = list(parse_workbook(xlsx))
-                print(f"[dry] {cat_dir.name}/{stem}: {len(tcs)} cases, "
-                      f"{sum(len(t['steps']) for t in tcs)} steps")
+                print(f"[dry] {cat_label}/{stem}: {len(tcs)} cases, "
+                      f"{sum(len(t['steps']) for t in tcs)} steps"
+                      + (" [flatten]" if flatten else ""))
                 for t in tcs:
                     print(f"   - {t['e2e_id']} | pri={t['priority_id']} | steps={len(t['steps'])} | {t['summary'][:80]}")
                 continue
-            wb_folder_id = find_or_create_folder(args.project_id, stem, cat_id)
-            print(f"[folder]     {stem} -> {wb_folder_id}")
+            parsed_tcs = list(parse_workbook(xlsx))
+            if not parsed_tcs:
+                print(f"  ~ skipping {cat_label}/{stem}: 0 test cases parsed (no folder created)")
+                continue
+            if flatten:
+                wb_folder_id = cat_id
+            else:
+                wb_folder_id = find_or_create_folder(args.project_id, stem, cat_id)
+                print(f"[folder]     {stem} -> {wb_folder_id}")
 
-            for tc in parse_workbook(xlsx):
+            for tc in parsed_tcs:
                 key_pair = (xlsx.name, tc["e2e_id"])
                 if key_pair in seen:
                     skipped += 1
@@ -434,6 +515,12 @@ def run_import(args, log_path: Path):
                     append_log(log_path, xlsx.name, tc["e2e_id"], key, iid, "ok")
                     created += 1
                     print(f"  + {key}  {tc['e2e_id']}  ({len(tc['steps'])} steps)")
+                    if args.samples is not None and created >= args.samples:
+                        print(f"\n[samples] reached cap of {args.samples} — stopping. "
+                              f"Review in QMetry, then re-run without --samples.")
+                        print(f"\nDone. created={created} skipped={skipped} failed={failed}")
+                        print(f"Log: {log_path}")
+                        return
                 except Exception as e:
                     append_log(log_path, xlsx.name, tc["e2e_id"], "", "", "failed", str(e)[:300])
                     failed += 1
@@ -447,23 +534,23 @@ def run_import(args, log_path: Path):
 
 def main():
     p = argparse.ArgumentParser(description="Import xlsx test cases into QMetry.")
-    p.add_argument("--input", type=Path, default=DEFAULT_INPUT_DIR,
-                   help=f"Root input directory (default: {DEFAULT_INPUT_DIR})")
-    p.add_argument("--parent-folder-id", type=int, default=DEFAULT_PARENT_FOLDER_ID,
+    p.add_argument("--input", type=Path, required=True,
+                   help="Root input directory (contains category subfolders or batch-root .xlsx files)")
+    p.add_argument("--parent-folder-id", type=int, default=_XI.get("parent_folder_id"),
                    help="QMetry parent folder ID under which the tree is created")
     p.add_argument("--root-folder-name",
                    help="Name of the top folder to create under --parent-folder-id (default: basename of --input)")
-    p.add_argument("--project-id", type=int, default=DEFAULT_PROJECT_ID)
+    p.add_argument("--project-id", type=int, default=_XI.get("project_id"))
     p.add_argument("--component-id", dest="component_ids", type=int, action="append",
                    default=None,
-                   help="Component ID to attach (repeat for multiple). Omit to attach none. "
-                        f"Default: {DEFAULT_COMPONENT_IDS}")
-    p.add_argument("--status-id", type=int, default=DEFAULT_STATUS_ID,
-                   help=f"Status ID for new test cases (default: {DEFAULT_STATUS_ID} = Done)")
-    p.add_argument("--api-test-field-id", default=DEFAULT_API_TEST_FIELD_ID,
+                   help="Component ID to attach (repeat for multiple). Omit for the config default, "
+                        "or pass an explicit list. To attach none, set componentIds=[] in config.")
+    p.add_argument("--status-id", type=int, default=_XI.get("status_id"),
+                   help="Status ID for new test cases")
+    p.add_argument("--api-test-field-id", default=_XI.get("api_test_field_id"),
                    help="QMetry custom field id for 'API Test' radio (empty to skip)")
-    p.add_argument("--api-test-yes", default=DEFAULT_API_TEST_OPTION_YES)
-    p.add_argument("--api-test-no", default=DEFAULT_API_TEST_OPTION_NO)
+    p.add_argument("--api-test-yes", default=_XI.get("api_test_yes"))
+    p.add_argument("--api-test-no", default=_XI.get("api_test_no"))
     p.add_argument("--log", type=Path,
                    help="Path to log CSV (default: scripts/import-<input-dirname>.log.csv)")
     p.add_argument("--only", help="Substring filter on workbook stem (case-insensitive)")
@@ -471,10 +558,19 @@ def main():
                    help="Parse and print, do not create anything in QMetry")
     p.add_argument("--fix-existing", action="store_true",
                    help="Re-write precondition + steps for previously imported cases (uses --log)")
+    p.add_argument("--samples", type=int, default=None,
+                   help="Import only the first N test cases (across all workbooks) so a human can spot-check "
+                        "them in QMetry before the full run. Re-run without --samples to continue (idempotent).")
     args = p.parse_args()
 
     if args.component_ids is None:
-        args.component_ids = list(DEFAULT_COMPONENT_IDS)
+        args.component_ids = list(_XI.get("component_ids") or [])
+    if args.project_id is None:
+        sys.exit("ERROR: --project-id is required (or set project.projectId in config.json)")
+    if args.parent_folder_id is None:
+        sys.exit("ERROR: --parent-folder-id is required (or set xlsxImport.parentFolderId in config.json)")
+    if args.status_id is None:
+        sys.exit("ERROR: --status-id is required (or set xlsxImport.statusId in config.json)")
     if not args.log:
         slug = re.sub(r"[^A-Za-z0-9._-]+", "-", args.input.name).strip("-").lower() or "import"
         args.log = Path(__file__).parent / f"import-{slug}.log.csv"
