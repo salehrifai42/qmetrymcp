@@ -1,10 +1,5 @@
 {
-  "_instructions": "Only 'connection' and 'project' are required. All other fields are optional — fill in only what you need.",
-
-  "connection": {
-    "apiKey": "YOUR_QMETRY_API_KEY_HERE",
-    "region": "US"
-  },
+  "_instructions": "Only 'project' is required. All other fields are optional. API key + region are NOT read from this file — set them via the QTM4J_API_KEY / QTM4J_REGION env vars (in .env or passed on the MCP launcher with -e). This is the single source of truth.",
 
   "project": {
     "_note": "Your numeric Jira project ID. Find in any project URL: ?projectId=<numeric-id>&projectKey=<KEY>",
