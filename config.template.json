@@ -13,7 +13,15 @@
     "apiTestFieldId": "qcf_0",
     "apiTestOptionYes": "0",
     "apiTestOptionNo": "0",
-    "componentIds": []
+    "componentIds": [],
+    "priorityMap": {
+      "_note": "Workbook P-code -> QMetry priority id (project-specific; discover with qtm4j_get_priorities). Required if your workbooks have a Priority column.",
+      "P1": 0,
+      "P2": 0,
+      "P3": 0,
+      "P4": 0
+    },
+    "defaultPriorityId": 0
   },
 
   "executionResultIds": {

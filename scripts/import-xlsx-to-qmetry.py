@@ -75,6 +75,8 @@ def _load_xlsx_defaults() -> dict:
         ("apiTestOptionYes", "api_test_yes"),
         ("apiTestOptionNo", "api_test_no"),
         ("componentIds", "component_ids"),
+        ("priorityMap", "priority_map"),
+        ("defaultPriorityId", "default_priority_id"),
     ):
         if k_cfg in xi:
             out[k_out] = xi[k_cfg]
@@ -83,13 +85,8 @@ def _load_xlsx_defaults() -> dict:
 _XI = _load_xlsx_defaults()
 
 # Workbook P-code → QMetry priority id (project-specific; see qtm4j_get_priorities)
-PRIORITY_MAP = {
-    "P1": 0,  # Blocker
-    "P2": 0,  # High
-    "P3": 0,  # Medium
-    "P4": 0,  # Low
-}
-DEFAULT_PRIORITY_ID = 0  # Medium
+PRIORITY_MAP: dict[str, int] = {k.upper(): int(v) for k, v in (_XI.get("priority_map") or {}).items()}
+DEFAULT_PRIORITY_ID = int(_XI.get("default_priority_id") or 0)
 
 # Header aliases — extend as new workbook layouts appear. Lower-case match.
 HEADER_ALIASES: dict[str, tuple[str, ...]] = {
@@ -99,7 +96,8 @@ HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "category":  ("category",),
     "test_type": ("test type", "type", "type (ui/api)"),
     "priority":  ("priority",),
-    "notes":     ("notes / endpoint", "notes/endpoint", "notes", "endpoint", "precondition", "preconditions"),
+    "precondition": ("precondition", "preconditions", "pre-condition", "pre-conditions"),
+    "notes":        ("notes / endpoint", "notes/endpoint", "notes", "endpoint"),
     "step_num":  ("step #", "step no", "step number", "step#"),
     "action":    ("step summary (action)", "step summary", "step", "action", "step description",
                   "test step description"),
@@ -253,6 +251,7 @@ def parse_workbook(xlsx_path: Path):
                                else str(cell(row, "summary") or ""),
                     "priority_id": PRIORITY_MAP.get(str(pri_raw or "").strip().upper(), DEFAULT_PRIORITY_ID),
                     "notes": cell(row, "notes") or "",
+                    "precondition": cell(row, "precondition") or "",
                     "category": cell(row, "category") or "",
                     "test_type": cell(row, "test_type") or "",
                     "steps": [],
@@ -405,7 +404,7 @@ def fix_existing(args, log_path: Path):
             iid = r["internal_id"]
             try:
                 qtm(f"/testcases/{iid}/versions/1", method="PUT",
-                    body={"precondition": str(tc["notes"]) if tc["notes"] else ""})
+                    body={"precondition": str(tc.get("precondition") or "")})
                 qtm(f"/testcases/{iid}/versions/1/teststeps", method="DELETE",
                     body={"deleteAll": True})
                 if tc["steps"]:
@@ -442,7 +441,7 @@ def run_import(args, log_path: Path):
     root_xlsxs = [x for x in sorted(args.input.glob("*.xlsx"))
                   if not x.name.startswith("~$") and not x.name.startswith(".")]
     if root_xlsxs:
-        walk.append((None, ".", root_xlsxs, True))
+        walk.append((None, ".", root_xlsxs, not args.folder_per_workbook))
     for cat_dir in sorted(p for p in args.input.iterdir() if p.is_dir()):
         xlsxs = [x for x in sorted(cat_dir.glob("*.xlsx"))
                  if not x.name.startswith("~$") and not x.name.startswith(".")]
@@ -505,8 +504,8 @@ def run_import(args, log_path: Path):
                             "id": args.api_test_field_id,
                             "value": args.api_test_yes if is_api else args.api_test_no,
                         }]
-                    if tc["notes"]:
-                        body["precondition"] = str(tc["notes"])
+                    if tc.get("precondition"):
+                        body["precondition"] = str(tc["precondition"])
 
                     res = qtm("/testcases", method="POST", body=body)
                     key, iid = res["key"], res["id"]
@@ -561,6 +560,9 @@ def main():
     p.add_argument("--samples", type=int, default=None,
                    help="Import only the first N test cases (across all workbooks) so a human can spot-check "
                         "them in QMetry before the full run. Re-run without --samples to continue (idempotent).")
+    p.add_argument("--folder-per-workbook", action="store_true",
+                   help="Create a subfolder for each workbook even when workbooks sit at the batch root "
+                        "(default flat behavior collapses them into the root folder).")
     args = p.parse_args()
 
     if args.component_ids is None:
@@ -575,11 +577,20 @@ def main():
         slug = re.sub(r"[^A-Za-z0-9._-]+", "-", args.input.name).strip("-").lower() or "import"
         args.log = Path(__file__).parent / f"import-{slug}.log.csv"
 
-    # Auth — env only (never put the API key on the CLI)
+    # Auth — env wins, then gitignored config.json.connection.apiKey (never put the API key on the CLI)
     api_key = os.environ.get("QTM4J_API_KEY")
+    if not api_key:
+        cfg_path = Path(__file__).parent.parent / "config.json"
+        if cfg_path.exists():
+            try:
+                api_key = (json.loads(cfg_path.read_text()).get("connection") or {}).get("apiKey")
+            except Exception:
+                pass
     if not api_key and not args.dry_run:
-        sys.exit("ERROR: QTM4J_API_KEY env var is required (not needed for --dry-run)")
-    region = os.environ.get("QTM4J_REGION", "US")
+        sys.exit("ERROR: QTM4J_API_KEY env var or config.json#connection.apiKey is required (not needed for --dry-run)")
+    region = os.environ.get("QTM4J_REGION") or \
+        ((json.loads((Path(__file__).parent.parent / "config.json").read_text()).get("connection") or {}).get("region")
+         if (Path(__file__).parent.parent / "config.json").exists() else None) or "US"
     base_url = "https://syd-qtmcloud.qmetry.com" if region == "AU" else "https://qtmcloud.qmetry.com"
     CFG.api_key = api_key or ""
     CFG.api_base = f"{base_url}/rest/api/latest"

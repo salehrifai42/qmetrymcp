@@ -209,6 +209,31 @@ Test changes with the [MCP Inspector](https://github.com/modelcontextprotocol/in
 QTM4J_API_KEY=your-key npx @modelcontextprotocol/inspector node dist/index.js
 ```
 
+## Replicating the bulk xlsx import workflow
+
+The repo ships a Claude Code skill (`.claude/skills/xlsx-to-qmetry/`) and a Python importer (`scripts/import-xlsx-to-qmetry.py`) for pushing folders of Excel test cases into QMetry. Tenant-specific IDs (project, parent folder, status, custom-field IDs, components) are kept out of git — you supply them in your own `config.json`.
+
+First-run after cloning:
+
+```bash
+cp config.template.json config.json
+# Edit config.json — fill in:
+#   connection.apiKey         (QMetry → avatar → API Keys → Generate)
+#   connection.projectId      (numeric Jira project ID)
+#   xlsxImport.parentFolderId (target folder for new test cases)
+#   xlsxImport.statusId       (e.g. Draft / Approved)
+#   xlsxImport.apiTestFieldId (custom field ID for "API Test" toggle, if used)
+#   xlsxImport.options        (Yes/No option IDs for that custom field)
+#   xlsxImport.componentIds   (default components to attach; can be [])
+
+cp .claude/commands/qtm4j.template.md .claude/commands/qtm4j.md
+# Optional: populate qtm4j.md with your tenant's IDs using the GET endpoints listed inside.
+```
+
+Discover the IDs you need with the running MCP server (`qtm4j_get_projects`, `qtm4j_get_statuses`, `qtm4j_get_components`, `qtm4j_get_custom_fields`, `qtm4j_list_folders`) or with `node scripts/refresh-field-reference.mjs` to dump everything to `field_reference.json`.
+
+Then launch Claude Code from the repo root and the `xlsx-to-qmetry` skill auto-loads. Drop your workbooks under `Input/<batch-name>/` and ask Claude to import them — see [`docs/EXCEL-IMPORT-GUIDE.md`](docs/EXCEL-IMPORT-GUIDE.md) for the full workflow.
+
 ## Bugs and contributions
 
 Found a bug or want to suggest a feature? Open an issue at <https://github.com/salehrifai42/qmetrymcp/issues>. PRs welcome.

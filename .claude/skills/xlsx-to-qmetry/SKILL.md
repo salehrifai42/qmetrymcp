@@ -35,7 +35,7 @@ If the count is zero, stop and ask the user.
 
 ### Step 3 — Verify the API key is current
 
-The API key in `config.json` and `$QTM4J_API_KEY` can be stale (the running MCP server caches its own copy). Always verify with a direct curl:
+**The API key is NOT stored in `config.json`** — it lives only in the `QTM4J_API_KEY` env var (or the MCP launcher's `-e` flag). `config.json` has no `connection` block; don't try to read `apiKey` from it. The currently-exported env var can be stale because the running MCP server caches its own copy at startup and keeps working even after the key rotates. Always verify with a direct curl that talks to the live API:
 
 ```bash
 curl -s -H "apiKey: $QTM4J_API_KEY" -H "Accept: application/json" \
@@ -43,11 +43,13 @@ curl -s -H "apiKey: $QTM4J_API_KEY" -H "Accept: application/json" \
   -o /dev/null -w "%{http_code}\n"
 ```
 
-If not 200, ask the user to regenerate (avatar → API Keys → Generate) and save to `config.json`. Then:
+If not 200, ask the user to regenerate (avatar → API Keys → Generate) and paste it. Then:
 
 ```bash
-export QTM4J_API_KEY=$(python3 -c "import json; print(json.load(open('config.json'))['connection']['apiKey'])")
+export QTM4J_API_KEY=<the-new-key>
 ```
+
+Do this **before** Step 4 (dry-run still works without a valid key — it only parses xlsx — but Step 5/6 will fail at the first POST and you'll waste the user's time).
 
 **Bash vs MCP within this workflow:**
 - xlsx parsing, the dry-run PLAN, idempotent CSV logging, and the create/teststeps loop stay in `scripts/import-xlsx-to-qmetry.py` — MCP can't read `.xlsx`, and looping 100+ cases through individual MCP tool calls is too noisy in context.
