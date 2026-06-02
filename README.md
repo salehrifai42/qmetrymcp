@@ -5,7 +5,7 @@
 [![Node](https://img.shields.io/node/v/qtm4j-mcp-server.svg)](https://www.npmjs.com/package/qtm4j-mcp-server)
 [![License](https://img.shields.io/npm/l/qtm4j-mcp-server.svg)](LICENSE)
 
-An [MCP](https://modelcontextprotocol.io) server with **42 tools** for [QMetry Test Management for Jira (QTM4J)](https://www.qmetry.com/qmetry-test-management-jira). Search and manage test cases, cycles, executions, plans, folders, automation rules, and project metadata from Claude Desktop, Claude Code, VS Code Copilot, Cursor, or any MCP-compatible client.
+An [MCP](https://modelcontextprotocol.io) server with **45 tools** for [QMetry Test Management for Jira (QTM4J)](https://www.qmetry.com/qmetry-test-management-jira). Search and manage test cases, cycles, executions, plans, folders, automation rules, and project metadata from Claude Desktop, Claude Code, VS Code Copilot, Cursor, or any MCP-compatible client.
 
 **Distribution**:
 - npm: [`qtm4j-mcp-server`](https://www.npmjs.com/package/qtm4j-mcp-server)
@@ -127,7 +127,7 @@ All tools are prefixed with `qtm4j_` to avoid collisions with other MCP servers.
 | --- | --- |
 | **Test Cases** | `qtm4j_create_test_case`, `qtm4j_get_test_case`, `qtm4j_search_test_cases`, `qtm4j_update_test_case`, `qtm4j_delete_test_case`, `qtm4j_clone_test_cases`, `qtm4j_create_test_steps`, `qtm4j_update_test_steps` |
 | **Test Cycles** | `qtm4j_create_test_cycle`, `qtm4j_get_test_cycle`, `qtm4j_search_test_cycles`, `qtm4j_update_test_cycle`, `qtm4j_delete_test_cycle` |
-| **Test Executions** | `qtm4j_get_test_cycle_executions`, `qtm4j_update_test_execution`, `qtm4j_update_test_step_execution`, `qtm4j_bulk_update_test_executions` |
+| **Test Executions** | `qtm4j_get_test_cycle_executions`, `qtm4j_update_test_execution`, `qtm4j_update_test_step_execution`, `qtm4j_bulk_update_test_executions`, `qtm4j_upload_execution_attachment`, `qtm4j_list_execution_attachments`, `qtm4j_delete_execution_attachment` |
 | **Test Plans** | `qtm4j_create_test_plan`, `qtm4j_get_test_plan`, `qtm4j_search_test_plans`, `qtm4j_update_test_plan`, `qtm4j_delete_test_plan`, `qtm4j_link_test_cycles_to_plan`, `qtm4j_get_linked_test_cycles`, `qtm4j_unlink_test_cycles_from_plan` |
 | **Folders** | `qtm4j_list_folders`, `qtm4j_create_folder` |
 | **Automation** | `qtm4j_link_automation_rule`, `qtm4j_unlink_automation_rule`, `qtm4j_run_automation_rules` |

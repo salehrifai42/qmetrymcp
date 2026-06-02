@@ -5,6 +5,8 @@ import dotenv from "dotenv";
 dotenv.config({ override: false });
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 import { z } from "zod";
 
 // ── Configuration ─────────────────────────────────────────────────────────────
@@ -142,7 +144,7 @@ function okMarkdown(md: string) {
 }
 
 /** Build a query string from a plain object, omitting undefined values. */
-function qs(params: Record<string, string | number | undefined>): string {
+function qs(params: Record<string, string | number | boolean | undefined>): string {
   const p = new URLSearchParams();
   for (const [k, v] of Object.entries(params)) {
     if (v !== undefined) p.set(k, String(v));
@@ -848,6 +850,160 @@ tool(
       body: JSON.stringify(rest),
     });
     return okJSON({ message: "Bulk execution update applied" });
+  }
+);
+
+tool(
+  "qtm4j_upload_execution_attachment",
+  {
+    title: "Upload Attachment to Test Execution",
+    description:
+      "Upload a local file as an attachment on an existing test-case execution inside a test cycle. " +
+      "This is a TWO-STEP presigned-S3 POST flow — NOT a direct multipart upload to QMetry. " +
+      "Step 1: GET `/testcycles/{cycleId}/testcase-executions/attachments/url/?fileName=…&projectId=…&testcaseExecutionId=…` " +
+      "returns `{ endpoint_url, params }` where `params` is a full AWS S3 browser-POST policy " +
+      "(`key`, `policy`, `success_action_status:201`, `x-amz-*`, `Content-Type`, …). " +
+      "Step 2: this tool POSTs `multipart/form-data` to `endpoint_url` with every `params` entry as a form field FIRST " +
+      "(order matters), then the `file` field LAST whose Blob type MUST equal the `Content-Type` param " +
+      "(e.g. `image/png`, `video/mp4`, `video/webm`) — otherwise S3 returns 403 SignatureDoesNotMatch. " +
+      "S3 returns 201 on success; there is no follow-up `register` call. " +
+      "GOTCHA: do NOT POST/PUT to the `…/testcase-executions/{id}/attachments` collection itself — it is list/delete only " +
+      "and returns 405 on write. To replace a file, call qtm4j_delete_execution_attachment then re-upload with the same fileName. " +
+      "Sibling credentials endpoints exist for `/testplans/attachments/url/` and `/shareabletestcases/teststeps/attachments/url/`.",
+    inputSchema: {
+      cycleId: z.string().describe("Test cycle internal id (e.g. from qtm4j_search_test_cycles)"),
+      testcaseExecutionId: ID.describe(
+        "Test-case-execution id (the `testCaseExecutionId` field from qtm4j_get_test_cycle_executions)"
+      ),
+      projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10000)"),
+      filePath: z.string().describe("Absolute path to the local file to upload"),
+      fileName: z
+        .string()
+        .optional()
+        .describe("Override file name shown in QMetry. Defaults to basename(filePath)."),
+      inline: z
+        .boolean()
+        .optional()
+        .default(false)
+        .describe("Whether QMetry should render the attachment inline (default false)"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  async ({ cycleId, testcaseExecutionId, projectId, filePath, fileName, inline }) => {
+    const name = fileName ?? basename(filePath);
+    const bytes = await readFile(filePath);
+
+    // Step 1 — request presigned S3 POST policy from QMetry.
+    const credentials = (await qtmFetch(
+      `/testcycles/${cycleId}/testcase-executions/attachments/url/${qs({
+        fileName: name,
+        projectId,
+        testcaseExecutionId,
+        inline: inline ?? false,
+      })}`
+    )) as { endpoint_url: string; params: Record<string, string> };
+
+    if (!credentials?.endpoint_url || !credentials?.params) {
+      throw new Error(
+        `QMetry attachments/url endpoint returned an unexpected payload: ${JSON.stringify(credentials)}`
+      );
+    }
+
+    const contentType = credentials.params["Content-Type"] ?? "application/octet-stream";
+
+    // Step 2 — multipart POST to S3. Append every policy field FIRST, file LAST.
+    const form = new FormData();
+    for (const [k, v] of Object.entries(credentials.params)) {
+      form.append(k, v);
+    }
+    // The file Blob's type MUST match the policy's Content-Type or S3 rejects the signature.
+    form.append("file", new Blob([new Uint8Array(bytes)], { type: contentType }), name);
+
+    const s3Response = await fetch(credentials.endpoint_url, { method: "POST", body: form });
+    if (![200, 201, 204].includes(s3Response.status)) {
+      const errBody = await s3Response.text();
+      throw new Error(
+        `S3 upload failed (HTTP ${s3Response.status} ${s3Response.statusText}): ${errBody}`
+      );
+    }
+
+    return okJSON({
+      message: `Uploaded ${name} to execution ${testcaseExecutionId} in cycle ${cycleId}. ` +
+        `Attachment registration in QMetry may lag a few seconds — call qtm4j_list_execution_attachments to confirm.`,
+      fileName: name,
+      contentType,
+      s3Status: s3Response.status,
+    });
+  }
+);
+
+tool(
+  "qtm4j_list_execution_attachments",
+  {
+    title: "List Test-Execution Attachments",
+    description:
+      "List all attachments on a test-case execution. " +
+      "GET `/testcycles/{cycleId}/testcase-executions/{testcaseExecutionId}/attachments` → `{ data: [{ name, id, fileSize, ... }] }`. " +
+      "Note: after qtm4j_upload_execution_attachment succeeds, registration of the new entry can lag a few seconds.",
+    inputSchema: {
+      cycleId: z.string().describe("Test cycle internal id"),
+      testcaseExecutionId: ID.describe("Test-case-execution id"),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ cycleId, testcaseExecutionId }) =>
+    okJSON(
+      await qtmFetch(
+        `/testcycles/${cycleId}/testcase-executions/${testcaseExecutionId}/attachments`
+      )
+    )
+);
+
+tool(
+  "qtm4j_delete_execution_attachment",
+  {
+    title: "Delete Test-Execution Attachments",
+    description:
+      "Delete one or more attachments from a test-case execution. " +
+      "DELETE `/testcycles/{cycleId}/testcase-executions/{testcaseExecutionId}/attachments` with JSON body " +
+      "`{\"attachmentIds\":[…]}` (or `{\"deleteAll\":true}`) → 204. " +
+      "GOTCHAS — all of these are WRONG and return 404/400: " +
+      "(a) appending `/{attachmentId}` to the attachments path; " +
+      "(b) the path `…/testcase-executions/attachments/{id}` (no executionId in front); " +
+      "(c) sending a bare array body. " +
+      "It MUST be the collection path plus an `attachmentIds` (or `deleteAll`) JSON body.",
+    inputSchema: {
+      cycleId: z.string().describe("Test cycle internal id"),
+      testcaseExecutionId: ID.describe("Test-case-execution id"),
+      attachmentIds: z
+        .array(z.union([z.string(), z.number()]))
+        .optional()
+        .describe("Attachment ids to delete (from qtm4j_list_execution_attachments). Omit if deleteAll=true."),
+      deleteAll: z
+        .boolean()
+        .optional()
+        .describe("If true, delete every attachment on this execution. Mutually exclusive with attachmentIds."),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ cycleId, testcaseExecutionId, attachmentIds, deleteAll }) => {
+    if (!deleteAll && (!attachmentIds || attachmentIds.length === 0)) {
+      throw new Error(
+        "Provide attachmentIds (non-empty) or set deleteAll=true."
+      );
+    }
+    const body: Record<string, unknown> = deleteAll
+      ? { deleteAll: true }
+      : { attachmentIds };
+    await qtmFetch(
+      `/testcycles/${cycleId}/testcase-executions/${testcaseExecutionId}/attachments`,
+      { method: "DELETE", body: JSON.stringify(body) }
+    );
+    return okJSON({
+      message: deleteAll
+        ? `Deleted all attachments on execution ${testcaseExecutionId}`
+        : `Deleted ${attachmentIds!.length} attachment(s) on execution ${testcaseExecutionId}`,
+    });
   }
 );
 

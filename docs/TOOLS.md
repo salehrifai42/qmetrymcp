@@ -76,6 +76,9 @@ Use these once at the start of a session to learn the IDs the project exposes.
 | `update_test_execution` | Single test-case-execution result |
 | `update_test_step_execution` | Single step result inside an execution |
 | `bulk_update_test_executions` | Many at once — uses `testCycleTestCaseMapId` |
+| `upload_execution_attachment` | Upload a local file (two-step presigned-S3 POST; not a direct upload to QMetry) |
+| `list_execution_attachments` | List attachments on an execution (registration lags a few seconds after upload) |
+| `delete_execution_attachment` | Delete one or more attachments — DELETE the collection with `{attachmentIds:[…]}` or `{deleteAll:true}` |
 
 ## Folders
 
