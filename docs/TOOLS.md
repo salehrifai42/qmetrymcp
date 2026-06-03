@@ -1,6 +1,6 @@
 # QTM4J MCP — Tool Reference
 
-42 tools, grouped by purpose. All tools are namespaced `qtm4j_*` and are listed by the bare name here.
+86 tools, grouped by purpose. All tools are namespaced `qtm4j_*` and are listed by the bare name here.
 
 Conventions:
 - `projectId` = numeric Jira project ID (e.g. `10000`)
@@ -34,33 +34,73 @@ Use these once at the start of a session to learn the IDs the project exposes.
 | `create_test_case` | Returns id + key |
 | `get_test_case` | Accepts ID or key; returns versions |
 | `update_test_case` | Pass `versionNo` (use `getTestCase` first) |
-| `delete_test_case` | By version |
-| `search_test_cases` | Filters: folderId, status (name), priority (name), labels, components. Set `recursive: true` with `folderId` for subtree counts |
+| `delete_test_case` | By version. Active cases must be archived first (API 400 otherwise) |
+| `archive_test_case` | PUT `/testcases/{id}/archive` — required before delete |
+| `unarchive_test_case` | Restore an archived case |
+| `search_test_cases` | Filters: folderId, status (name), priority (name), labels, components, `query` (free-text → API `searchText`). Set `recursive: true` with `folderId` for subtree counts |
 | `clone_test_cases` | Bulk clone with optional folder/project target |
 
 ## Test cycles
 
 | Tool | Notes |
 |---|---|
-| `create_test_cycle` | |
+| `create_test_cycle` | `priority`/`status` are numeric IDs (number or numeric string) |
 | `get_test_cycle` | Accepts key (`PROJ-TR-123`) — call this first to resolve to internal `id` |
-| `update_test_cycle` | |
-| `delete_test_cycle` | |
-| `search_test_cycles` | |
+| `update_test_cycle` | `priority`/`status` numeric IDs |
+| `delete_test_cycle` | Active cycles must be archived first |
+| `archive_test_cycle` | PUT `/testcycles/{id}/archive` — required before delete |
+| `unarchive_test_cycle` | Restore an archived cycle |
+| `search_test_cycles` | `query` free-text maps to `searchText` |
 | `get_test_cycle_executions` | Returns `testCycleTestCaseMapId` per row — needed for bulk updates |
 
 ## Test plans
 
 | Tool | Notes |
 |---|---|
-| `create_test_plan` | |
+| `create_test_plan` | `priority`/`status` numeric IDs |
 | `get_test_plan` | |
-| `update_test_plan` | |
-| `delete_test_plan` | |
-| `search_test_plans` | |
-| `link_test_cycles_to_plan` | |
-| `unlink_test_cycles_from_plan` | |
+| `update_test_plan` | `priority` numeric ID |
+| `delete_test_plan` | Active plans must be archived first |
+| `archive_test_plan` | PUT `/testplans/{id}/archive` — required before delete |
+| `unarchive_test_plan` | Restore an archived plan |
+| `search_test_plans` | `query` free-text maps to `searchText` |
+| `link_test_cycles_to_plan` | `testcycleIds` are cycle **UID strings** (search `id`), not numeric |
+| `unlink_test_cycles_from_plan` | Same UID-string `testcycleIds` |
 | `get_linked_test_cycles` | |
+
+## Comments
+
+Test case comments are version-scoped; cycle/plan comments are flat. Add tools accept either `comment` (string) or `comments` (array).
+
+| Tool | Notes |
+|---|---|
+| `get_test_case_comments` | `versionNo` optional (defaults to latest) |
+| `add_test_case_comment` | `versionNo` required |
+| `update_test_case_comment` | Needs `versionNo` + `commentId` |
+| `delete_test_case_comment` | Needs `versionNo` + `commentId` |
+| `get_test_cycle_comments` | |
+| `add_test_cycle_comment` | |
+| `update_test_cycle_comment` | |
+| `delete_test_cycle_comment` | |
+| `get_test_plan_comments` | |
+| `add_test_plan_comment` | |
+| `update_test_plan_comment` | |
+| `delete_test_plan_comment` | |
+
+## Defects
+
+`defectIDs` are numeric Jira defect IDs. Reads are POST with an optional `filter`.
+
+| Tool | Notes |
+|---|---|
+| `get_execution_defects` | Defects on a test-case execution |
+| `link_execution_defects` | PUT `{defectIDs:[…]}` |
+| `unlink_execution_defects` | DELETE `{defectIDs:[…]}` |
+| `get_step_execution_defects` | Defects on a test-step execution |
+| `link_step_execution_defects` | |
+| `unlink_step_execution_defects` | |
+| `search_cycle_defects` | All defects across a cycle's executions |
+| `get_cycle_defect_summary` | Aggregated defect summary for a cycle |
 
 ## Test steps
 
@@ -76,6 +116,8 @@ Use these once at the start of a session to learn the IDs the project exposes.
 | `update_test_execution` | Single test-case-execution result |
 | `update_test_step_execution` | Single step result inside an execution |
 | `bulk_update_test_executions` | Many at once — uses `testCycleTestCaseMapId` |
+| `get_execution_teststeps` | List per-step execution records for a test-case execution |
+| `update_execution_custom_fields` | Set execution custom fields (`{id:"qcf_…", value, cascadeValue}`) |
 | `upload_execution_attachment` | Upload a local file (two-step presigned-S3 POST; not a direct upload to QMetry) |
 | `list_execution_attachments` | List attachments on an execution (registration lags a few seconds after upload) |
 | `delete_execution_attachment` | Delete one or more attachments — DELETE the collection with `{attachmentIds:[…]}` or `{deleteAll:true}` |
@@ -85,7 +127,7 @@ Use these once at the start of a session to learn the IDs the project exposes.
 | Tool | Notes |
 |---|---|
 | `list_folders` | Pass `folderId` to scope to a subtree (full tree can be huge) |
-| `create_folder` | |
+| `create_folder` | Root-level folders use `parentId: -1` (0 → 404) |
 
 ## Automation rules
 

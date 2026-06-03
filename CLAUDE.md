@@ -89,5 +89,13 @@ const SearchFilters = { folderId, status, priority, assignee, query };
 - `projectId` must be **numeric** (e.g. `10000`), never the key string (`"<KEY>"`).
 - Keys follow the pattern `<KEY>-TC-*` (test cases), `<KEY>-TR-*` (cycles), `<KEY>-TP-*` (plans).
 - The GET endpoints for a single resource accept either the internal ID or the key (`<KEY>-TR-123`). Search/execution endpoints require the internal `id` from a prior search response.
+- **Search free-text** — the `query` filter maps to the API's `searchText` key (via `buildFilter()`); passing `query` raw is silently ignored and returns all rows.
+- **Folder root** — new folders use `parentId: -1` for root (0 → 404).
+- **Priority/status on create/update cycle & plan** — numeric IDs only (`NumericId` schema accepts a number or numeric string, rejects names). Resolve via `qtm4j_get_priorities` / `qtm4j_get_statuses`.
+- **Linking cycles to a plan** — `testcycleIds` are cycle **UID strings** (search `id`), not numeric IDs. Cycle/plan internal `id` is a string UID.
+- **Archive before delete** — active cycles/plans/cases return 400 on delete; archive first (`qtm4j_archive_test_{cycle,plan,case}`, PUT `/…/archive` body `"{}"`), `unarchive` restores.
+- **Comments** — testcase comments are version-scoped (POST `/testcases/{id}/versions/{no}/comments`); cycle/plan comments are flat (`/testcycles|testplans/{id}/comments`). Add tools accept `comment` (string) or `comments` (array).
+- **Defects** — execution/step/cycle level under `/testcycles/{id}/…/defects`; reads are POST `{filter}`, link/unlink are PUT/DELETE `{defectIDs:[…]}` (numeric Jira IDs).
 - 204 responses return `null` body; the tools wrap these as `{ message: "…" }`.
+- **Execution comment read-back** — there is no GET on a single execution (`/testcycles/{id}/testcase-executions/{execId}` is PUT/DELETE only → 405), no `…/comments` sub-resource (404), and `testcases/search` drops the `comment` field. The only read path that surfaces the saved comment/result/assignee is `GET /testcycles/{cycleId}/testcases/{testCycleTestCaseMapId}/executions` → `{ executions: { data: [{ comment, executionResult, assignee, … }] } }`. It keys on `testCycleTestCaseMapId` (not `testCaseExecutionId`); the execution id only appears inside each record. The `data[]` array is execution history (one entry per re-execution), each carrying a single `comment` (not a comment thread). Exposed via `qtm4j_get_test_execution`; `qtm4j_update_test_execution` uses it for optional read-after-write verification when given `testCycleTestCaseMapId`.
 - AU region URL: `https://syd-qtmcloud.qmetry.com` (not `qtmcloud-au`).
