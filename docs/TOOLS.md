@@ -1,6 +1,6 @@
 # QTM4J MCP — Tool Reference
 
-86 tools, grouped by purpose. All tools are namespaced `qtm4j_*` and are listed by the bare name here.
+87 tools, grouped by purpose. All tools are namespaced `qtm4j_*` and are listed by the bare name here.
 
 Conventions:
 - `projectId` = numeric Jira project ID (e.g. `10000`)
@@ -136,6 +136,7 @@ Test case comments are version-scoped; cycle/plan comments are flat. Add tools a
 | `link_automation_rule` | |
 | `unlink_automation_rule` | |
 | `run_automation_rules` | Triggers `POST /automation-rule/{key}/run` |
+| `get_automation_audit_log` | `POST /automation-rule/audit` — the only audit trail QTM4J exposes (automation-rule executions: who/when). No general test-case/cycle/folder deletion history exists. |
 
 ---
 

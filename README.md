@@ -5,7 +5,7 @@
 [![Node](https://img.shields.io/node/v/qtm4j-mcp-server.svg)](https://www.npmjs.com/package/qtm4j-mcp-server)
 [![License](https://img.shields.io/npm/l/qtm4j-mcp-server.svg)](LICENSE)
 
-An [MCP](https://modelcontextprotocol.io) server with **86 tools** for [QMetry Test Management for Jira (QTM4J)](https://www.qmetry.com/qmetry-test-management-jira). Search and manage test cases, cycles, executions, plans, folders, comments, defects, automation rules, and project metadata from Claude Desktop, Claude Code, VS Code Copilot, Cursor, or any MCP-compatible client.
+An [MCP](https://modelcontextprotocol.io) server with **87 tools** for [QMetry Test Management for Jira (QTM4J)](https://www.qmetry.com/qmetry-test-management-jira). Search and manage test cases, cycles, executions, plans, folders, comments, defects, automation rules, and project metadata from Claude Desktop, Claude Code, VS Code Copilot, Cursor, or any MCP-compatible client.
 
 **Distribution**:
 - npm: [`qtm4j-mcp-server`](https://www.npmjs.com/package/qtm4j-mcp-server)

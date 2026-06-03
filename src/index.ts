@@ -1509,6 +1509,55 @@ tool(
     )
 );
 
+tool(
+  "qtm4j_get_automation_audit_log",
+  {
+    title: "Get Automation Audit Log",
+    description:
+      "Read QMetry's automation-rule audit log — the only audit trail QTM4J exposes via API. " +
+      "Returns who ran what and when (entityType, action, detailMessage, created.{createdBy, createdOn}), " +
+      "e.g. automation-rule Execute events that may have reset/repopulated a test cycle. " +
+      "issueId is the automation rule's numeric id (NOT a cycle/case id). Filter by action (e.g. \"Execute\"), " +
+      "createdBy (array of Jira account ids), or createdOn (ISO 8601). " +
+      "NOTE: QTM4J has no general test-case/cycle/folder deletion history endpoint — for who deleted/unlinked " +
+      "test cases from a cycle or folder, use the QMetry UI history or contact QMetry support.",
+    inputSchema: {
+      jiraProjectId: z
+        .number()
+        .int()
+        .describe("Jira project numeric ID (e.g. 10011). From qtm4j_get_projects."),
+      issueId: z
+        .number()
+        .int()
+        .optional()
+        .describe("Automation rule numeric id (the audit log is keyed by automation rule, not cycle/case)."),
+      entityType: z.string().optional().describe('Entity type filter, e.g. "Issue".'),
+      action: z.string().optional().describe('Action filter, e.g. "Execute" or "Created".'),
+      detailMessage: z.string().optional().describe("Detail message filter."),
+      createdBy: z
+        .array(z.string())
+        .optional()
+        .describe('List of Jira account ids, e.g. ["5cd1...","..."].'),
+      createdOn: z.string().optional().describe("Created-on filter in ISO 8601, e.g. 2023-10-05T14:48:00Z."),
+      module: z.number().int().optional().describe("Module ID filter."),
+      startAt: z.number().int().min(0).optional().describe("Page offset (default 0)."),
+      maxResults: z.number().int().min(1).max(100).optional().describe("Items per page (max 100, default 50)."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  async ({ startAt, maxResults, ...filter }) => {
+    const body = Object.fromEntries(
+      Object.entries(filter).filter(([, v]) => v !== undefined)
+    );
+    return okJSON(
+      await qtmFetch(`/automation-rule/audit${qs({ startAt, maxResults })}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      })
+    );
+  }
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  AUTHORING (extra tools that help building & organising test cases)
 // ─────────────────────────────────────────────────────────────────────────────
