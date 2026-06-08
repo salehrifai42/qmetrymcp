@@ -2,16 +2,26 @@
 import dotenv from "dotenv";
 // override:false → env vars from the parent process (Claude Code MCP config) win over `.env`,
 // so a stale `.env` in the repo can't shadow a freshly-rotated key passed via the MCP launcher.
-dotenv.config({ override: false });
+// quiet:true → suppress dotenv v17's "injected env … // tip:" banner. This is CRITICAL for the
+// MCP stdio transport: STDOUT must carry ONLY JSON-RPC messages. Any extra byte on stdout (the
+// dotenv banner, a stray console.log, library noise) corrupts the protocol stream and makes the
+// host hang/fail on the `initialize` handshake. All diagnostics MUST go to stderr (see `log` below).
+dotenv.config({ override: false, quiet: true });
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import { z } from "zod";
 
+// ── Logging ───────────────────────────────────────────────────────────────────
+// STDOUT is reserved EXCLUSIVELY for the MCP JSON-RPC transport. Never write
+// human/diagnostic output to stdout — it corrupts the protocol stream and hangs the
+// host's `initialize` handshake. Always log through `log`, which writes to stderr.
+const log = (msg: string) => process.stderr.write(msg.endsWith("\n") ? msg : msg + "\n");
+
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-const API_KEY = process.env.QTM4J_API_KEY;
+const API_KEY = process.env.QTM4J_API_KEY ?? process.env.QMETRY_OPENAPI_KEY;
 const REGION = (process.env.QTM4J_REGION ?? "US").toUpperCase();
 
 const BASE_URLS: Record<string, string> = {
@@ -24,7 +34,7 @@ const CHARACTER_LIMIT = 25000;
 
 if (!API_KEY) {
   process.stderr.write(
-    "ERROR: QTM4J_API_KEY environment variable is required.\n" +
+    "ERROR: QTM4J_API_KEY (or QMETRY_OPENAPI_KEY) environment variable is required.\n" +
       "Set it in your MCP client config or in a .env file before starting the server.\n"
   );
   process.exit(1);
@@ -2477,6 +2487,4 @@ if (process.argv.includes("--check")) {
 
 const transport = new StdioServerTransport();
 await server.connect(transport);
-process.stderr.write(
-  `qtm4j-mcp-server running — region: ${REGION}, base URL: ${BASE_URL}\n`
-);
+log(`qtm4j-mcp-server running — region: ${REGION}, base URL: ${BASE_URL}`);
