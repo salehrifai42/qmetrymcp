@@ -38,3 +38,7 @@ fine.pub
 # Local API reference (large, fetched per-tenant)
 qtm4j_apiary_blueprint.json
 
+
+# Python
+__pycache__/
+*.pyc

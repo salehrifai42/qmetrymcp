@@ -8,9 +8,10 @@ This is a **Model Context Protocol (MCP) server** for QMetry for Jira (QTM4J). E
 npm run build      # compile TypeScript → dist/
 npm start          # run compiled server (requires QTM4J_API_KEY env var)
 npm run dev        # run directly from source via tsx (no build step)
+npm test           # run unit tests (node:test via tsx) — no API key or network needed
 ```
 
-There are no tests. To verify a change, build and hit the endpoint directly:
+Unit tests (`src/*.test.ts`) run against the HTTP client's injectable transport seam (`src/client.ts`) and need no API key or live network. For end-to-end checks against a real tenant, build and hit the endpoint directly:
 
 ```bash
 QTM4J_API_KEY=<key> node -e "
@@ -36,7 +37,7 @@ const tool = <Shape extends z.ZodRawShape>(name, description, inputSchema, callb
 
 ### HTTP
 
-`qtmFetch(path, options?, attempt?)` prepends `BASE_URL`, injects `apiKey` header, auto-retries 429s with exponential back-off (max 3 attempts). Returns parsed JSON or throws with HTTP status + body.
+The HTTP client lives in `src/client.ts` as a side-effect-free deep module. `createQtmClient({ apiKey, baseUrl, transport?, sleep?, maxAttempts? })` returns `{ fetch }`, which prepends `baseUrl`, injects the `apiKey` header, auto-retries 429s with exponential back-off (default 3 attempts), and returns parsed JSON or throws `QtmApiError` with HTTP status + body. The network is reached through an injectable `Transport` port (production = global `fetch`; tests = an in-memory adapter), and `resolveBaseUrl(region)` maps US/AU → base URL. `src/index.ts` binds one client and exposes `qtmFetch(path, options?)` as a thin alias, so all tool call sites are unchanged.
 
 ### Shared schemas
 

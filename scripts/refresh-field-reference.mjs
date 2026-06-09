@@ -4,7 +4,7 @@
  * Usage: QTM4J_API_KEY=<key> node scripts/refresh-field-reference.mjs
  */
 
-const API_KEY = process.env.QTM4J_API_KEY;
+const API_KEY = process.env.QTM4J_API_KEY?.trim();
 const PROJECT_ID = Number(process.env.QTM4J_PROJECT_ID);
 const BASE = process.env.QTM4J_REGION === "AU"
   ? "https://syd-qtmcloud.qmetry.com/rest/api/latest"

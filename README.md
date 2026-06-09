@@ -211,6 +211,12 @@ Test changes with the [MCP Inspector](https://github.com/modelcontextprotocol/in
 QTM4J_API_KEY=your-key npx @modelcontextprotocol/inspector node dist/index.js
 ```
 
+Run the unit tests (no API key or network needed — the HTTP client's transport is faked in-memory):
+
+```bash
+npm test
+```
+
 ## Replicating the bulk xlsx import workflow
 
 The repo ships a Claude Code skill (`.claude/skills/xlsx-to-qmetry/`) and a Python importer (`scripts/import-xlsx-to-qmetry.py`) for pushing folders of Excel test cases into QMetry. Tenant-specific IDs (project, parent folder, status, custom-field IDs, components) are kept out of git — you supply them in your own `config.json`.

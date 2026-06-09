@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 
 const cfg = JSON.parse(readFileSync(new URL("../config.json", import.meta.url)));
-const API_KEY = cfg.connection.apiKey;
+const API_KEY = (cfg.connection.apiKey ?? "").trim();
 const REGION = cfg.connection.region ?? "US";
 const PROJECT = cfg.project.projectId; // 10011
 

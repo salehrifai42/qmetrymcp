@@ -10,8 +10,9 @@ dotenv.config({ override: false, quiet: true });
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { readFile } from "node:fs/promises";
-import { basename } from "node:path";
+import { basename, resolve } from "node:path";
 import { z } from "zod";
+import { createQtmClient, resolveBaseUrl, QtmApiError } from "./client.js";
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 // STDOUT is reserved EXCLUSIVELY for the MCP JSON-RPC transport. Never write
@@ -21,15 +22,10 @@ const log = (msg: string) => process.stderr.write(msg.endsWith("\n") ? msg : msg
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-const API_KEY = process.env.QTM4J_API_KEY ?? process.env.QMETRY_OPENAPI_KEY;
+const API_KEY = (process.env.QTM4J_API_KEY ?? process.env.QMETRY_OPENAPI_KEY)?.trim();
 const REGION = (process.env.QTM4J_REGION ?? "US").toUpperCase();
 
-const BASE_URLS: Record<string, string> = {
-  US: "https://qtmcloud.qmetry.com/rest/api/latest",
-  AU: "https://syd-qtmcloud.qmetry.com/rest/api/latest",
-};
-
-const BASE_URL = BASE_URLS[REGION] ?? BASE_URLS["US"];
+const BASE_URL = resolveBaseUrl(REGION);
 const CHARACTER_LIMIT = 25000;
 
 if (!API_KEY) {
@@ -46,54 +42,15 @@ const FOLDER_SEGMENT: Record<"TESTCASE" | "TESTCYCLE" | "TESTPLAN", "testcase-fo
   TESTPLAN: "testplan-folders",
 };
 
-// ── HTTP helpers ──────────────────────────────────────────────────────────────
+// ── HTTP client ───────────────────────────────────────────────────────────────
+// The retry / error-mapping / auth logic lives behind an injectable transport seam
+// in ./client.ts. Here we bind it to the resolved region + key using the production
+// `fetch` adapter. All 87 tools call `qtmFetch` exactly as before.
 
-class QtmApiError extends Error {
-  constructor(public status: number, public statusText: string, public body: unknown) {
-    super(`HTTP ${status} ${statusText}`);
-  }
-}
+const client = createQtmClient({ apiKey: API_KEY, baseUrl: BASE_URL });
 
-async function qtmFetch(
-  path: string,
-  options: RequestInit = {},
-  attempt = 1
-): Promise<unknown> {
-  const url = `${BASE_URL}${path}`;
-  const headers: Record<string, string> = {
-    apiKey: API_KEY ?? "",
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    ...(options.headers as Record<string, string> | undefined),
-  };
-
-  const response = await fetch(url, { ...options, headers });
-
-  // Exponential back-off for rate limiting (max 3 attempts)
-  if (response.status === 429 && attempt < 3) {
-    const retryAfter = Number.parseInt(
-      response.headers.get("Retry-After") ?? "1",
-      10
-    );
-    const delay = Math.max(retryAfter * 1000, 1000) * attempt;
-    await new Promise((r) => setTimeout(r, delay));
-    return qtmFetch(path, options, attempt + 1);
-  }
-
-  const text = await response.text();
-  let body: unknown;
-  try {
-    body = text ? JSON.parse(text) : null;
-  } catch {
-    body = text;
-  }
-
-  if (!response.ok) {
-    throw new QtmApiError(response.status, response.statusText, body);
-  }
-
-  return body;
-}
+const qtmFetch = (path: string, options?: RequestInit): Promise<unknown> =>
+  client.fetch(path, options);
 
 /** Translate any thrown error into an actionable MCP tool error. */
 function toolError(error: unknown): { content: { type: "text"; text: string }[]; isError: true } {
@@ -369,7 +326,7 @@ const ResponseFormat = z
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
-const server = new McpServer({ name: "qtm4j-mcp-server", version: "0.1.1" });
+const server = new McpServer({ name: "qtm4j-mcp-server", version: "0.2.0" });
 
 type ToolAnnotations = {
   readOnlyHint?: boolean;
@@ -1064,7 +1021,7 @@ tool(
         "Test-case-execution id (the `testCaseExecutionId` field from qtm4j_get_test_cycle_executions)"
       ),
       projectId: z.union([z.string(), z.number()]).describe("Jira project numeric ID (e.g. 10000)"),
-      filePath: z.string().describe("Absolute path to the local file to upload"),
+      filePath: z.string().describe("Path to the local file to upload (absolute, or relative to the server's working directory)"),
       fileName: z
         .string()
         .optional()
@@ -1078,8 +1035,17 @@ tool(
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   async ({ cycleId, testcaseExecutionId, projectId, filePath, fileName, inline }) => {
-    const name = fileName ?? basename(filePath);
-    const bytes = await readFile(filePath);
+    // Resolve relative paths against the process cwd so callers aren't forced to
+    // pass an OS-specific absolute path; surface a clear error if the file is missing.
+    const absPath = resolve(filePath);
+    const name = fileName ?? basename(absPath);
+    let bytes: Buffer;
+    try {
+      bytes = await readFile(absPath);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      throw new Error(`Cannot read file to upload at '${absPath}': ${reason}. Check the path exists and is readable.`);
+    }
 
     // Step 1 — request presigned S3 POST policy from QMetry.
     const credentials = (await qtmFetch(
@@ -1416,7 +1382,11 @@ tool(
         return null;
       }
       const subtree = findSubtree(nodes);
-      if (!subtree) return okJSON({ error: `Folder ${folderId} not found` });
+      if (!subtree)
+        throw new Error(
+          `Folder ${folderId} not found in project ${projectId} (${folderType}). ` +
+            `Verify the folderId with qtm4j_list_folders (no folderId) or qtm4j_search_folders.`
+        );
       result = [subtree];
     }
 

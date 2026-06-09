@@ -592,7 +592,7 @@ def main():
         ((json.loads((Path(__file__).parent.parent / "config.json").read_text()).get("connection") or {}).get("region")
          if (Path(__file__).parent.parent / "config.json").exists() else None) or "US"
     base_url = "https://syd-qtmcloud.qmetry.com" if region == "AU" else "https://qtmcloud.qmetry.com"
-    CFG.api_key = api_key or ""
+    CFG.api_key = (api_key or "").strip()
     CFG.api_base = f"{base_url}/rest/api/latest"
 
     if args.fix_existing:
