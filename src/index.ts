@@ -326,7 +326,7 @@ const ResponseFormat = z
 
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
-const server = new McpServer({ name: "qtm4j-mcp-server", version: "0.2.0" });
+const server = new McpServer({ name: "qtm4j-mcp-server", version: "0.2.1" });
 
 type ToolAnnotations = {
   readOnlyHint?: boolean;
