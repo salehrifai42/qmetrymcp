@@ -13,6 +13,7 @@ import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { z } from "zod";
 import { createQtmClient, resolveBaseUrl, QtmApiError } from "./client.js";
+import { stripEmptyDeep, tallyByComponent } from "./executions.js";
 
 // ── Logging ───────────────────────────────────────────────────────────────────
 // STDOUT is reserved EXCLUSIVELY for the MCP JSON-RPC transport. Never write
@@ -771,22 +772,72 @@ tool(
   {
     title: "List Test Cycle Executions",
     description:
-      "List all test case executions linked to a test cycle. Requires the internal cycle id (from qtm4j_get_test_cycle). Returns testCycleTestCaseMapId (for bulk_update), testCaseExecutionId (for update_test_execution), key, status, priority per test case.",
+      "List test case executions linked to a test cycle. Requires the internal cycle id (from qtm4j_get_test_cycle). Returns testCycleTestCaseMapId (for bulk_update), testCaseExecutionId (for update_test_execution), key, status, priority per test case. " +
+      "Supports server-side filtering by `query` (free-text on key/summary) and `components` (component names). " +
+      "Pass groupBy='component' to get a compact { total, counts } tally across the WHOLE cycle (auto-paginates internally) instead of listing rows. " +
+      "Responses are slimmed by default (empty objects/arrays/nulls dropped); set slim=false for the raw payload.",
     inputSchema: {
       id: ID.describe("Test cycle ID (internal ID from qtm4j_search_test_cycles)"),
+      query: z.string().optional().describe("Free-text filter on test case key/summary (server-side searchText)"),
+      components: z
+        .array(z.string())
+        .optional()
+        .describe("Filter by component names, e.g. ['IAM','CLB'] (server-side)"),
+      groupBy: z
+        .enum(["component"])
+        .optional()
+        .describe(
+          "Summary mode: 'component' auto-paginates the entire cycle and returns { total, counts } per component instead of execution rows"
+        ),
+      slim: z
+        .boolean()
+        .default(true)
+        .describe("Drop empty objects/arrays and null fields from the response (default true)"),
       response_format: ResponseFormat,
       ...Pagination,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
-  async ({ id, startAt, maxResults, sort, fields, response_format }) => {
-    const data = await qtmFetch(
+  async ({ id, startAt, maxResults, sort, fields, response_format, query, components, groupBy, slim }) => {
+    const filter = buildFilter({ query, components });
+    if (groupBy === "component") {
+      const pageSize = 100;
+      const items: any[] = [];
+      let at = startAt ?? 0;
+      let total = Number.POSITIVE_INFINITY;
+      while (at < total && items.length < 10000) {
+        const page = (await qtmFetch(
+          `/testcycles/${id}/testcases/search${qs({ startAt: at, maxResults: pageSize, fields: "key,components" })}`,
+          { method: "POST", body: JSON.stringify({ filter }) }
+        )) as any;
+        const rows: any[] = page?.data ?? [];
+        items.push(...rows);
+        total = page?.total ?? items.length;
+        if (!rows.length) break;
+        at += rows.length;
+      }
+      const counts = tallyByComponent(items);
+      const result = { total: items.length, groupBy: "component", counts };
+      if (response_format === "markdown") {
+        const lines = [
+          `# Executions by Component`,
+          "",
+          `**Total executions**: ${result.total}`,
+          "",
+          ...Object.entries(counts).map(([name, n]) => `- **${name}**: ${n}`),
+        ];
+        return okMarkdown(lines.join("\n"));
+      }
+      return okJSON(result);
+    }
+    let data = await qtmFetch(
       `/testcycles/${id}/testcases/search${qs({ startAt, maxResults, sort, fields })}`,
       {
         method: "POST",
-        body: JSON.stringify({ filter: {} }),
+        body: JSON.stringify({ filter }),
       }
     );
+    if (slim) data = stripEmptyDeep(data);
     return response_format === "markdown" ? okMarkdown(fmtExecutions(data)) : okJSON(data);
   }
 );

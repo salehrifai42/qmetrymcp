@@ -51,7 +51,7 @@ Use these once at the start of a session to learn the IDs the project exposes.
 | `archive_test_cycle` | PUT `/testcycles/{id}/archive` — required before delete |
 | `unarchive_test_cycle` | Restore an archived cycle |
 | `search_test_cycles` | `query` free-text maps to `searchText` |
-| `get_test_cycle_executions` | Returns `testCycleTestCaseMapId` per row — needed for bulk updates |
+| `get_test_cycle_executions` | Returns `testCycleTestCaseMapId` per row — needed for bulk updates. Server-side `query`/`components` filters; `groupBy: "component"` auto-paginates the whole cycle and returns a `{ total, counts }` tally; responses slimmed by default (`slim: false` for raw) |
 
 ## Test plans
 

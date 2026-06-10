@@ -52,7 +52,7 @@ const tool = <Shape extends z.ZodRawShape>(name, description, inputSchema, callb
 
 **Search endpoints** — all use `POST /…/search` with filters in the body under `{ filter: { projectId, ...filters } }` and pagination on the query string. The `qs()` helper builds the query string, omitting `undefined` values.
 
-**Execution endpoints** — `POST /testcycles/{id}/testcases/search` requires `{ filter: {} }` (not bare `{}`).
+**Execution endpoints** — `POST /testcycles/{id}/testcases/search` requires `{ filter: {} }` (not bare `{}`). The filter supports server-side `searchText` and `components` (component name strings) — verified live; the executions tool exposes these as `query`/`components`, plus `groupBy: "component"` (auto-paginated tally) and default response slimming via `stripEmptyDeep` (`src/executions.ts`).
 
 **Folder endpoints** — split by type, not a single `/folders` path:
 - `GET/POST /projects/{projectId}/testcase-folders`

@@ -57,7 +57,7 @@ const SearchFilters = { folderId, status, priority, assignee, query };
 ## QTM4J API patterns & quirks
 
 - **Search endpoints** — `POST /…/search` with filters under `{ filter: { projectId, ...filters } }`, pagination on query string via `qs()` helper.
-- **Execution endpoints** — `POST /testcycles/{id}/testcases/search` requires `{ filter: {} }` (not bare `{}`).
+- **Execution endpoints** — `POST /testcycles/{id}/testcases/search` requires `{ filter: {} }` (not bare `{}`). The filter supports server-side `searchText` and `components` (component name strings) — verified live; the executions tool exposes these as `query`/`components`, plus `groupBy: "component"` (auto-paginated tally) and default response slimming via `stripEmptyDeep` (`src/executions.ts`).
 - **Folder endpoints** — split by type:
   - `GET/POST /projects/{projectId}/testcase-folders`
   - `GET/POST /projects/{projectId}/testcycle-folders`
